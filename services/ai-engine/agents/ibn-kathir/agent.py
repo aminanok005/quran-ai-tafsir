@@ -149,23 +149,14 @@ class IbnKathirAgent:
         Returns:
             List of retrieved sources
         """
-        try:
-            # Use source retrieval system to find relevant Ibn Kathir passages
-            sources = await self.source_retrieval.retrieve(
-                ayah_id=ayah_id,
-                context=context,
-                methodology=self.methodology,
-                max_results=10
-            )
+        sources = await self.source_retrieval.retrieve(
+            ayah_id=ayah_id,
+            context=context,
+            methodology=self.methodology,
+            max_results=10
+        )
 
-            # Filter and prioritize sources
-            filtered_sources = await self._filter_sources(sources, context)
-
-            return filtered_sources
-
-        except Exception as e:
-            logger.error(f"Source retrieval failed for {ayah_id}: {str(e)}")
-            return []
+        return await self._filter_sources(sources, context)
 
     async def _filter_sources(self, sources: List[Dict[str, Any]], context: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
@@ -214,32 +205,20 @@ class IbnKathirAgent:
         valid_sources = []
 
         for source in sources:
-            try:
-                # Validate source authenticity
-                is_valid, validation_result = await self.citation_validator.validate(
-                    source_id=source.get("source_id"),
-                    author=source.get("author"),
-                    title=source.get("title"),
-                    excerpt=source.get("excerpt", "")
-                )
+            is_valid, _ = await self.citation_validator.validate(
+                source_id=source.get("source_id"),
+                author=source.get("author"),
+                title=source.get("title"),
+                excerpt=source.get("excerpt", "")
+            )
 
-                if is_valid:
-                    source["validation_result"] = validation_result
-                    source["verified"] = True
-                    valid_sources.append(source)
-                else:
-                    logger.warning(
-                        f"Source validation failed: {source.get('source_id')} - "
-                        f"Issues: {validation_result.get('issues', [])}"
-                    )
-
-            except Exception as e:
-                logger.warning(f"Citation validation error for source {source.get('source_id')}: {str(e)}")
-                # Include source even if validation fails, but mark as unverified
-                source["validation_result"] = {"error": str(e)}
-                source["verified"] = False
-                source["relevance_score"] *= 0.5  # Penalize validation failures
+            if is_valid:
+                source["verified"] = True
                 valid_sources.append(source)
+            else:
+                logger.warning(
+                    "Source validation failed: %s", source.get("source_id")
+                )
 
         return valid_sources
 
@@ -255,29 +234,19 @@ class IbnKathirAgent:
         Returns:
             Generated explanation
         """
-        try:
-            # Prepare source material for LLM
-            source_material = self._prepare_source_material(sources)
-            arabic_text = context.get("arabic_text", "")
-            surah_number = context.get("surah", 0)
-            ayah_number = context.get("ayah", 0)
+        source_material = self._prepare_source_material(sources)
+        arabic_text = context.get("arabic_text", "")
+        surah_number = context.get("surah", 0)
+        ayah_number = context.get("ayah", 0)
 
-            # Generate explanation (this would typically call an LLM)
-            explanation = await self._call_llm_for_explanation(
-                ayah_id=ayah_id,
-                arabic_text=arabic_text,
-                surah_number=surah_number,
-                ayah_number=ayah_number,
-                source_material=source_material,
-                methodology=self.methodology
-            )
-
-            return explanation
-
-        except Exception as e:
-            logger.error(f"Explanation generation failed for {ayah_id}: {str(e)}")
-            # Return a structured explanation based on available sources as fallback
-            return self._create_structured_explanation_fallback(ayah_id, sources, context)
+        return await self._call_llm_for_explanation(
+            ayah_id=ayah_id,
+            arabic_text=arabic_text,
+            surah_number=surah_number,
+            ayah_number=ayah_number,
+            source_material=source_material,
+            methodology=self.methodology
+        )
 
     async def _call_llm_for_explanation(self, ayah_id: str, arabic_text: str,
                                       surah_number: int, ayah_number: int,
@@ -296,28 +265,8 @@ class IbnKathirAgent:
         Returns:
             Generated explanation
         """
-        # This is a placeholder for LLM integration
-        # In a real implementation, this would:
-        # 1. Format a prompt with the ayah context and sources
-        # 2. Call the LLM API (OpenAI/Anthropic/etc.)
-        # 3. Process the response
-        # 4. Validate the response meets quality standards
-
-        # For now, return a structured explanation based on source material
-        prompt = self._build_explanation_prompt(
-            ayah_id, arabic_text, surah_number, ayah_number,
-            source_material, methodology
-        )
-
-        # TODO: Integrate with actual LLM service
-        logger.warning("LLM integration not yet implemented - using structured fallback")
-
-        return self._create_structured_explanation_fallback(
-            ayah_id, source_material, {
-                "arabic_text": arabic_text,
-                "surah": surah_number,
-                "ayah": ayah_number
-            }
+        raise NotImplementedError(
+            "An LLM provider is not configured for Tafsir explanation generation."
         )
 
     def _build_explanation_prompt(self, ayah_id: str, arabic_text: str,
@@ -337,8 +286,8 @@ class IbnKathirAgent:
         Returns:
             Formatted prompt
         """
-        prompt = f"""You are Ibn Kathir's Tafsir agent, providing explanations based on
-Quran, authentic Hadith, and reports from the Salaf.
+        prompt = f"""You are a research assistant, not Ibn Kathir.
+Explain only what is supported by the provided source passages.
 
 AYAH CONTEXT:
 Surah {surah_number}:{ayah_number}
@@ -403,57 +352,6 @@ Verified: {'Yes' if verified else 'No'}
 
         return "\n".join(formatted_sources)
 
-    def _create_structured_explanation_fallback(self, ayah_id: str, sources: List[Dict[str, Any]],
-                                                context: Dict[str, Any]) -> str:
-        """
-        Create a structured explanation as fallback when LLM is not available.
-
-        Args:
-            ayah_id: The ayah identifier
-            sources: Available sources
-            context: Context information
-
-        Returns:
-            Structured explanation
-        """
-        surah = context.get("surah", 0)
-        ayah = context.get("ayah", 0)
-        arabic_text = context.get("arabic_text", "")
-
-        explanation = f"""بِسْمِ اللَّهِ الرَّحْمَنِ الرَّحِيمِ
-
-تفسير سورة {surah}:{ayah} من منظور ابن كثير
-
-النص القرآني:
-{arabic_text}
-
-المصادر المتاحة:
-"""
-
-        if sources:
-            for i, source in enumerate(sources, 1):
-                author = source.get("author", "Unknown")
-                title = source.get("title", "Untitled")
-                excerpt = source.get("excerpt", "")
-                relevance = source.get("relevance_score", 0)
-                verified = source.get("verified", False)
-
-                explanation += f"""
-{i}. {author} - {title} (Relevance: {relevance:.2f}, Verified: {'✓' if verified else '✗'})
-{excerpt}
-
-"""
-        else:
-            explanation += "\nلا توجد مصادر متاحة لهذا الجزء.\n"
-
-        explanation += """
-الخلاصة:
-يجب الرجوع إلى المصادر الأصلية للحصول على تفسير كامل ودقيق.
-هذا النظام هو مساعد بحثي، وليس بديلاً عن العلماء.
-"""
-
-        return explanation
-
     def _create_error_output(self, error_message: str, confidence: float = 0.0,
                            scholarly_position: str = "Error") -> AgentOutput:
         """
@@ -468,12 +366,16 @@ Verified: {'Yes' if verified else 'No'}
             Error output
         """
         return {
-            "explanation": f"العذر الطويل من ابن كثير: {error_message}",
+            "explanation": (
+                "ยังไม่สามารถให้คำอธิบายตัฟซีรที่มีหลักฐานรองรับได้ "
+                "โปรดลองอีกครั้งเมื่อมีแหล่งข้อมูลที่ได้รับอนุญาตและตรวจสอบแล้ว"
+            ),
             "citations": [],
             "confidence": confidence,
             "scholarly_position": scholarly_position,
-            "methodology_notes": "Quality gates failed or no valid sources found",
-            "limitations": ["Agent execution failed", "No valid sources available"]
+            "evidence_level": "UNVERIFIED",
+            "methodology_notes": "No verified source material is available.",
+            "limitations": [error_message]
         }
 
     def _validate_quality_gates(self, context: Dict[str, Any]) -> bool:
@@ -600,12 +502,13 @@ Verified: {'Yes' if verified else 'No'}
 
             test_sources = await self.source_retrieval.retrieve("1:1", test_context, self.methodology, max_results=1)
 
+            available = len(test_sources) > 0
             return {
                 "agent_id": self.agent_id,
-                "healthy": True,
-                "source_retrieval_working": len(test_sources) > 0,
+                "healthy": available,
+                "source_retrieval_working": available,
                 "last_check": datetime.now().isoformat(),
-                "issues": [] if test_sources else ["No sources available for test ayah"]
+                "issues": [] if available else ["No verified source material is configured"]
             }
 
         except Exception as e:
