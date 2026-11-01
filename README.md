@@ -1092,17 +1092,31 @@ AI ต้องสามารถบอกได้ว่า:
 
 # 6. คำแนะนำก่อนเริ่ม Vibe Coding
 
-ผมแนะนำให้เริ่มจาก 3 เรื่องตามลำดับ
+เอกสารนี้เป็น Product Vision และ PRD ไม่ใช่หลักฐานว่างานใน repository ยังไม่เริ่มต้นแล้ว ก่อนสั่ง AI coding agent ให้ตรวจโค้ดและสถานะจริงทุกครั้ง เพราะมีโค้ดบางส่วนอยู่แล้ว และแผน implementation บางฉบับอาจเก่ากว่าสภาพ repository
 
-| ลำดับ | งาน | ผลลัพธ์ |
-|---|---|---|
-| 1 | PRD + Architecture | กำหนดระบบทั้งหมด |
-| 2 | Data Source Audit | ตรวจสอบ API, ตำรา และสิทธิ์การใช้งาน |
-| 3 | MVP Implementation Plan | วางแผนการพัฒนาโดยไม่สร้างระบบซ้ำซ้อน |
+### ลำดับเริ่มงานที่แนะนำ
 
-**ข้อเสนอเชิงสถาปัตยกรรม:** ใช้ Next.js + FastAPI + PostgreSQL/pgvector เป็นแกนหลัก และใช้ Bun/TypeScript สำหรับ Shamela ingestion adapter ส่วน Redis ค่อยเพิ่มเมื่อจำเป็นต้องมีงานเบื้องหลังหรือคิวประมวลผล
+1. **สำรวจของเดิมก่อนแก้:** ตรวจ `git status` และอ่าน [AGENT_MASTER_TASK.md](./AGENT_MASTER_TASK.md), [README_FRAMEWORK.md](./README_FRAMEWORK.md) และ [dispatch/START_HERE.md](./dispatch/START_HERE.md) รวมถึงไฟล์ในขอบเขตที่จะเปลี่ยน
+2. **เลือกงานเป็นชิ้นเล็กที่ส่งมอบได้:** เริ่มจาก vertical slice เดียว เช่น เปิดอ่านอายะฮ์ เลือกอายะฮ์ แล้วส่งบริบทไปยัง Tafsir Agent
+3. **ทำตามสัญญาและขอบเขตไฟล์:** ใช้ API routes, shared types และ agent ที่มีอยู่ก่อน ห้ามสร้างระบบซ้ำหรือแก้ไฟล์ข้ามเจ้าของงานโดยไม่ประสาน
+4. **พิสูจน์ผลลัพธ์:** เพิ่มหรือปรับ targeted tests และรายงานคำสั่งกับผลทดสอบจริง ห้ามอ้างว่า feature ใช้งานได้จาก scaffold, mock หรือ placeholder
+5. **ขยายเมื่อ slice แรกผ่าน:** ค่อยเพิ่มแหล่งข้อมูลและ agent อื่น โดยรักษา source attribution และ behavior เมื่อไม่มีหลักฐาน
 
-ไม่จำเป็นต้องเริ่มด้วย Kubernetes หรือ Microservices เพราะจะเพิ่มความซับซ้อนโดยที่ยังไม่มีความจำเป็น
+### สถานะ repository ที่ควรตรวจสอบก่อนเริ่ม
+
+- มี FastAPI app, Quran router/service, shared type definitions, Ibn Kathir agent และ agent test อยู่แล้ว
+- `apps/web/` ยังไม่มี Quran Reader source code; อย่าถือว่า UI เสร็จแล้วเพียงเพราะมี configuration files
+- แผนใน `.claude/plans/` เป็นแนวทาง ไม่ใช่รายงานสถานะปัจจุบัน ให้ยืนยันกับไฟล์และ tests จริงก่อนทำตาม โดยเฉพาะข้อความที่ระบุว่า repository ยังไม่มี implementation
+
+### ข้อกำหนดสำหรับ AI coding agent
+
+- อ่าน task และข้อกำหนดใน [AGENT_MASTER_TASK.md](./AGENT_MASTER_TASK.md) ก่อนแก้ไข
+- รักษา Arabic Quran text และ RTL; ไม่สร้างข้อความอัลกุรอาน คำแปล หะดีษ คำอ้างจากตัฟซีร หรือ citation ขึ้นเอง
+- แสดงความต่างระหว่างหลักฐานที่ตรวจสอบแล้วกับ AI synthesis; หากไม่มีแหล่งข้อมูลที่ตรวจสอบได้ ให้แจ้งข้อจำกัดแทนการแต่ง citation
+- ห้ามติดตั้งหรืออัปเกรด dependency, เปลี่ยน schema/API ที่เข้ากันไม่ได้, ดาวน์โหลดตำราที่ไม่มีสิทธิ์ หรือทำ Git operation ที่เปลี่ยนแปลงประวัติ โดยไม่ได้รับอนุมัติ
+- ใช้คำสั่งทดสอบที่มีอยู่จริงและรันเฉพาะส่วนที่ได้รับผลกระทบก่อน เช่น `python3 -m pytest tests/test_ibn_kathir_agent.py` สำหรับ Ibn Kathir Agent
+
+เริ่มแบบ modular monolith ตามโครงสร้างจริงของ repository ไม่ต้องเพิ่ม Kubernetes, microservices, Redis หรือ vector infrastructure ก่อนที่ MVP จะมีความจำเป็นและข้อกำหนดชัดเจน
 
 ### 7. ผมอยากเสนอฟีเจอร์สำคัญเพิ่มเติมอีกหนึ่งอย่าง
 
