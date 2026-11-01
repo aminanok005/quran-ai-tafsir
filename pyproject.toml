@@ -1,0 +1,76 @@
+[project]
+name = "quran-ai-services"
+version = "0.1.0"
+description = "Backend, AI orchestration and source-ingestion services for QURAN AI"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "sqlalchemy>=2.0.0",
+    "postgresql>=4.0.0",
+    "pgvector>=0.2.0",
+    "psycopg2-binary>=2.9.0",
+    "python-multipart>=0.0.8",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "redis>=5.0.0",
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.0",
+    "alembic>=1.13.0",
+    "click>=8.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "black>=24.0.0",
+    "isort>=5.13.0"
+]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "quran-ai-services"
+version = "0.1.0"
+description = "Backend services for QURAN AI platform"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+ignore = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "services"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
+
+[tool.alembic]
+script_location = "database/migrations"
+repr_table_names = false
+
+[tool.black]
+line-length = 100
+target-version = ['py312']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "mypy>=1.11"
+]
+
+[tool.pipenv]
+allow_prereleases = true

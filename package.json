@@ -1,0 +1,31 @@
+{
+  "name": "quran-ai",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "bun@1.2.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "bun --cwd apps/web dev",
+    "build:web": "bun --cwd apps/web run build",
+    "lint": "bun --workspaces --if-present run lint",
+    "typecheck": "bun --workspaces --if-present run typecheck",
+    "test": "bun --workspaces --if-present run test",
+    "db:migrate": "cd services/api && python -m alembic upgrade head",
+    "db:seed": "cd services/api && python -m scripts.seed_data",
+    "ingestion:run": "cd services/ingestion && bun run index"
+  },
+  "dependencies": {
+    "@types/node": "^20",
+    "typescript": "^5.0.0"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  },
+  "engines": {
+    "node": "20.x",
+    "bun": "1.2.0"
+  }
+}

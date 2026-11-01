@@ -1,0 +1,101 @@
+# JavaScript / TypeScript
+node_modules/
+.next/
+out/
+dist/
+coverage/
+.turbo/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+secrets/
+.credentials/
+
+# Databases, indexes and generated data
+*.sqlite
+*.sqlite3
+*.db
+data/raw/
+data/processed/
+data/indexes/
+uploads/
+storage/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Build artifacts
+/target/
+.pybuild/
+
+# QURAN AI specific
+.env.local
+*.log
+*.pid
+.cache/
+*.swp
+*.swo
+
+# Coverage and test artifacts
+coverage/
+.nyc_output/
+.coverage
+htmlcov/
+
+# Temporary files
+tmp/
+temp/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# System files
+.DS_Store
+Thumbs.db
+
+# QURAN AI specific
+.env.production
+.env.development
+
+# Database
+*.sql
+!/*.sql.example
+
+# Vector stores
+*.index
+*.vectors
+
+# Cache
+*.cache
+
+# Logs
+logs/
+*.log
+
+# Session
+.session
+
+# Temporary
+.tmp
+*.tmp
