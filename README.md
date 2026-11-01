@@ -44,54 +44,46 @@ AI ต้องไม่สร้างคำพูดขึ้นมาแล�
 
 ส่วนนี้เป็นหัวใจของโปรเจกต์ เพราะความน่าเชื่อถือของระบบขึ้นอยู่กับแหล่งข้อมูลมากกว่าโมเดล AI
 
-ผมแนะนำให้แยกแหล่งข้อมูลออกเป็น 2 ระบบ
+เริ่มจาก **Quranic Universal Library (QUL)** เป็นแหล่งดาวน์โหลดหลักสำหรับ
+การนำเข้าข้อมูลอัลกุรอานและทรัพยากรที่เกี่ยวข้อง แล้วเก็บ Resource ที่ผ่านการ
+ตรวจสอบไว้ในฐานข้อมูลของเราเอง
 
-### 2.1 Quran API — ข้อมูลอัลกุรอาน
+### 2.1 QUL — Quran data and resource downloads
 
-เลือกใช้ **Quran.Foundation API (Quran.com)** เป็นแหล่งข้อมูลหลัก
+QUL รวม Resource หลายหมวด เช่น Quran scripts, translations, tafsir,
+recitations, morphology, topics, surah information และ structural metadata
+มีไฟล์ดาวน์โหลด JSON และ SQLite เหมาะกับการนำเข้าแบบ batch
 
-[Quran Foundation API Documentation](https://api-docs.quran.com/docs/api-reference/?utm_source=chatgpt.com)
+**ข้อควรรู้:** [QUL API docs](https://qul.tarteel.ai/docs/api) ระบุว่า Public
+REST API ยังอยู่ระหว่างออกแบบ จึงใช้ไฟล์ Resource จากหน้าเว็บ ไม่เรียก
+`/api/v1` ใน production จนกว่าจะเปิดให้บริการจริง ตรวจสอบผู้แต่ง ฉบับพิมพ์
+สิทธิ์การใช้ และ mapping ของ Resource แต่ละรายการก่อนนำเข้า
 
-รองรับข้อมูลสำคัญ เช่น
+### 2.2 Quran Foundation API — optional runtime source
 
-- 114 Surahs
-- Arabic Uthmani Text
-- Ayah Number
-- Thai / English Translations ตามรายการที่ API รองรับ
-- Word-by-Word
-- Transliteration
-- Audio Recitation
-- Tafsir Resources
-- Juz, Hizb, Page และข้อมูลโครงสร้างอัลกุรอาน
+ใช้ [Quran Foundation API](https://api-docs.quran.com/docs/api-reference/)
+เป็น adapter เสริมเมื่อจำเป็นต้องเรียกข้อมูลสด ไม่ใช่ source หลักสำหรับ QUL
+import ต้องตรวจสอบ credential, terms, Thai translation และความซ้ำซ้อนของข้อมูล
+ก่อนใช้งาน โดยเก็บ credentials ไว้ฝั่ง Backend เท่านั้น
 
-API มีระบบ OAuth2 โดยต้องเก็บ Client Secret ไว้ที่ Backend เท่านั้น ห้ามเปิดเผยใน Frontend [Quran API Documentation](https://api-docs.quran.com/docs/quickstart/?utm_source=chatgpt.com)
+### 2.3 Tafsir and Hadith sources
 
-**ข้อกำหนด:** ต้องตรวจสอบรายการภาษาไทยและ Translation ID ที่มีอยู่จริงก่อนกำหนดเป็นภาษาหลักของระบบ
+เริ่มจาก tafsir Resource ของ QUL ที่มีอยู่จริงและได้รับอนุญาต เปิดใช้ทีละ
+หนังสือ/ฉบับพิมพ์ Shamela หรือ provider อื่นเป็น adapter เพิ่มเติมเมื่อ
+ตรวจสอบสิทธิ์แล้ว ส่วน hadith corpus และ grading ต้องเลือกแหล่งตรวจสอบต่างหาก
+เพราะ QUL docs ไม่ได้ระบุบริการ hadith verification ที่ครบถ้วน
 
-### 2.2 Tafsir Knowledge Sources — ฐานข้อมูลตำราตัฟซีร
+ไฟล์ QUL SQLite สำหรับ Ibn Kathir, Tabari, Qurtubi และ As-Saadi (Arabic /
+Indonesian) อยู่ใน `data-tafsir/` และตัวดึงข้อมูล Ibn Kathir อ่านฐานข้อมูลนี้
+โดยตรงได้แล้ว ใช้ `QURAN_TAFSIR_DB_PATH` หรือ config `source_path` เลือกไฟล์
+อื่น; การเลือก DB ไม่ได้เปลี่ยนตัวตนหรือ methodology ของ Agent และทุกชุดยังมี
+สถานะ rights/verification เป็น unknown จนกว่าจะ review
 
-ใช้ตำราจาก Maktabah Shamela เป็นหนึ่งในแหล่งข้อมูลหลัก
-
-Repository ที่คุณให้มา:
-
-[Shamela TypeScript Library](https://github.com/ragaeeb/shamela?utm_source=chatgpt.com)
-
-ผมตรวจสอบ `AGENTS.MD` และ `README.md` ของ Repository นี้แล้ว
-
-พบว่ามีความสามารถ:
-- ดาวน์โหลดข้อมูลหนังสือจาก Shamela API
-- ดาวน์โหลด Master Database
-- ค้นหาข้อมูลหนังสือ
-- อ่านเนื้อหาหนังสือ
-- ประมวลผลเนื้อหาภาษาอาหรับ
-- แปลง HTML เป็น Markdown
-- ใช้งานผ่าน TypeScript และ Bun
-
-ข้อจำกัดสำคัญคือ Shamela Library ต้องใช้ API Key และต้องตรวจสอบสิทธิ์การนำหนังสือมาเก็บ ทำดัชนี และใช้กับ AI ก่อนใช้งานจริง
-
-**ผมแนะนำให้ใช้ Shamela เป็น Data Ingestion Layer ไม่ใช่ให้ AI เชื่อมต่อ Shamela โดยตรงทุกครั้งที่ตอบคำถาม**
-
-ควรดาวน์โหลดและจัดระเบียบข้อมูลที่ได้รับอนุญาตไว้ในฐานข้อมูลของเราเอง
+Agent ต้องค้นจากข้อมูลที่นำเข้าและตรวจสอบแล้ว ไม่เรียกฐานข้อมูลภายนอกในทุกคำถาม
+และห้ามระบุเล่ม หน้า ฉบับพิมพ์ หรือระดับหะดีษที่ไม่มีในข้อมูลต้นทาง
+อ่านข้อกำหนดและ workflow ได้ที่ [Data Integration Guide](docs/sources/README.md).
+QUL tafsir IDs ที่ให้มาและสถานะสิทธิ์/ภาษาสรุปไว้ในคู่มือเดียวกัน โดยยังต้อง
+ตรวจสอบไฟล์จริงก่อนนำเข้าและเปิดใช้ Agent.
 
 ---
 
@@ -436,9 +428,13 @@ Each agent has a separate source collection, methodology, retrieval configuratio
 ## Data Sources
 
 Primary:
-- Quran Foundation API
+- QUL resource downloads (JSON / SQLite, subject to resource-level review)
 - Original Quran text
 - Verified Quran translations
+
+Optional:
+- Quran Foundation API for a verified runtime use case
+- Shamela or another reviewed provider through an ingestion adapter
 
 Classical Tafsir:
 - Tafsir Ibn Kathir
@@ -454,15 +450,19 @@ Additional Sources:
 - Other recognized Hadith collections
 - Relevant scholarly references
 
+These are source categories to review, not data currently guaranteed to be
+available in the platform. Verify the exact collection, edition, grading
+provenance, and usage rights before enabling Hadith-based claims.
+
 ## Data Ingestion Pipeline
 
 Source Registry
     |
     v
-Book Metadata Retrieval
+Resource Selection and Rights Review
     |
     v
-Authorized Book Download
+Versioned JSON / SQLite Download
     |
     v
 Arabic Content Extraction
@@ -486,13 +486,14 @@ Quality Validation
 Knowledge Database
     |
     v
-Vector Index
+Optional Vector Index (candidate discovery only)
 
-### Shamela Integration
+### Provider adapters
 
-Use the Shamela TypeScript library as an optional ingestion adapter.
-
-Do not assume that every book is available or licensed for unrestricted AI processing.
+Use QUL downloads as the first provider adapter. Add Shamela or other providers
+only when access and intended use are confirmed. Never assume that a book is
+available or licensed for unrestricted storage, quotation, indexing, or AI
+processing.
 
 Maintain:
 - Book ID
@@ -637,10 +638,9 @@ Database:
 - Redis
 
 Data Ingestion:
-- TypeScript
-- Bun
-- Shamela Library Adapter
-- Quran Foundation API Adapter
+- QUL JSON / SQLite import
+- Optional provider-specific ingestion adapters
+- Quran Foundation API adapter only for an approved runtime use case
 
 Communication:
 - REST API
@@ -899,7 +899,8 @@ PHASE 0 — Research & Foundation
 
 - Verify Quran API access.
 - Verify Thai translation availability.
-- Audit Shamela integration.
+- Audit QUL resources and select the initial Quran, translation, and tafsir datasets.
+- Verify per-resource rights, metadata, edition, and ayah mapping before import.
 - Verify book availability and usage rights.
 - Select initial Tafsir editions.
 - Define source attribution schema.
@@ -1100,7 +1101,12 @@ AI ต้องสามารถบอกได้ว่า:
 | 2 | Data Source Audit | ตรวจสอบ API, ตำรา และสิทธิ์การใช้งาน |
 | 3 | MVP Implementation Plan | วางแผนการพัฒนาโดยไม่สร้างระบบซ้ำซ้อน |
 
-**ข้อเสนอเชิงสถาปัตยกรรม:** ใช้ Next.js + FastAPI + PostgreSQL/pgvector เป็นแกนหลัก และใช้ Bun/TypeScript สำหรับ Shamela ingestion adapter ส่วน Redis ค่อยเพิ่มเมื่อจำเป็นต้องมีงานเบื้องหลังหรือคิวประมวลผล
+**ข้อเสนอเชิงสถาปัตยกรรม:** ใช้ Next.js + FastAPI + PostgreSQL เป็นแกนหลัก
+เริ่ม ingestion ด้วย QUL JSON/SQLite และใช้ pgvector เมื่อจำเป็นสำหรับ candidate
+discovery; retrieval ที่นำไปอ้างอิงต้องยืนยันกับข้อความต้นฉบับเสมอ เพิ่ม
+provider adapter สำหรับ Quran Foundation API หรือ Shamela เฉพาะเมื่อยืนยัน
+access และสิทธิ์ใช้งานแล้ว ส่วน Redis ค่อยเพิ่มเมื่อจำเป็นต้องมีงานเบื้องหลัง
+หรือคิวประมวลผล
 
 ไม่จำเป็นต้องเริ่มด้วย Kubernetes หรือ Microservices เพราะจะเพิ่มความซับซ้อนโดยที่ยังไม่มีความจำเป็น
 

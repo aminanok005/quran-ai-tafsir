@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "sources": {
+    "qul:ar-tafsir-ibn-kathir": {
+      "status": "pending",
+      "license": null,
+      "allowed_uses": [],
+      "reviewed_by": null,
+      "reviewed_at": null,
+      "evidence_refs": [],
+      "decision_note": null,
+      "review_history": []
+    },
+    "qul:ar-tafsir-al-tabari": {
+      "status": "pending",
+      "license": null,
+      "allowed_uses": [],
+      "reviewed_by": null,
+      "reviewed_at": null,
+      "evidence_refs": [],
+      "decision_note": null,
+      "review_history": []
+    },
+    "qul:ar-tafseer-al-qurtubi": {
+      "status": "pending",
+      "license": null,
+      "allowed_uses": [],
+      "reviewed_by": null,
+      "reviewed_at": null,
+      "evidence_refs": [],
+      "decision_note": null,
+      "review_history": []
+    },
+    "qul:tafsir-as-saadi": {
+      "status": "pending",
+      "license": null,
+      "allowed_uses": [],
+      "reviewed_by": null,
+      "reviewed_at": null,
+      "evidence_refs": [],
+      "decision_note": null,
+      "review_history": []
+    },
+    "qul:id-tafsir-as-saadi": {
+      "status": "pending",
+      "license": null,
+      "allowed_uses": [],
+      "reviewed_by": null,
+      "reviewed_at": null,
+      "evidence_refs": [],
+      "decision_note": null,
+      "review_history": []
+    }
+  }
+}

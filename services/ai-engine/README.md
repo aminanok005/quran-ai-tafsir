@@ -17,21 +17,26 @@ This package contains the core AI components for QURAN AI:
 
 Specialized agents for each scholar's methodology:
 
-#### Ibn Kathir Agent
-- **Methodology**: Tafsir bil-Ma'thur
-- **Focus**: Quran, authentic Hadith, and reports from the Salaf
-- **Quality Gates**: Citation accuracy (0.95), Content authenticity (0.98)
-- **Status**: Implemented
+#### Source-bound assistants
 
-#### Al-Tabari Agent  
-- **Methodology**: Early Tafsir narrations and Sahabah interpretations
-- **Focus**: Early Islamic scholarship, linguistic analysis
-- **Status**: Planned (Phase 3)
+- **Available books**: Ibn Kathir, Al-Tabari, Al-Qurtubi, and Al-Sa'di
+- **Retrieval**: Exact ayah/group mapping from each book's QUL SQLite corpus
+- **Output**: Original source excerpt and AI-generated Thai explanation are
+  separate and individually attributed
+- **Status**: Source retrieval and chat API implemented; public display and
+  model processing remain blocked until source rights are approved
+- **Important**: These are AI study assistants over selected books, not
+  simulations or impersonations of the named scholars
+
+#### Al-Tabari Agent
+
+- **Status**: Source-bound assistant available for the supplied corpus; source
+  scholarly review is pending
 
 #### Al-Qurtubi Agent
-- **Methodology**: Ahkam al-Quran (legal rulings)
-- **Focus**: Fiqh analysis, Madhhab comparisons
-- **Status**: Planned (Phase 3)
+
+- **Status**: Source-bound assistant available for the supplied corpus; source
+  scholarly review is pending
 
 #### Ibn Ashur Agent
 - **Methodology**: Linguistic and Maqasid analysis
@@ -39,9 +44,9 @@ Specialized agents for each scholar's methodology:
 - **Status**: Planned (Phase 3)
 
 #### Al-Sa'di Agent
-- **Methodology**: Accessible Tafsir for general readers
-- **Focus**: Simplified explanations, practical lessons
-- **Status**: Planned (Phase 3)
+
+- **Status**: Source-bound assistant available in Arabic and Indonesian; the
+  Indonesian source is never represented as Thai or Arabic
 
 #### Al-Zuhayli Agent
 - **Methodology**: Contemporary Fiqh and social applications

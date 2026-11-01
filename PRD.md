@@ -134,46 +134,77 @@
 
 # 6. DATA SOURCE ARCHITECTURE
 
-## 6.1 Quran Foundation API
+## 6.1 Primary ingestion source: Quranic Universal Library (QUL)
 
-ใช้ Quran Foundation API เป็นแหล่งข้อมูลหลักสำหรับ:
-
-- Quran Chapters
-- Quran Verses
-- Arabic Text
-- Translations
-- Word-by-Word
-- Audio
-- Tafsir resources
-- Search
+ใช้ QUL Resource Catalog เป็นแหล่งแรกสำหรับการนำเข้าข้อมูลอัลกุรอานและ
+ทรัพยากรที่เกี่ยวข้อง โดยดาวน์โหลด JSON เพื่อสำรวจข้อมูล และใช้ SQLite
+สำหรับชุดข้อมูลขนาดใหญ่หรือการ query ซ้ำ จากนั้นนำเข้าข้อมูลที่ผ่านการตรวจสอบ
+เข้า PostgreSQL ของระบบ
 
 เอกสารอ้างอิง:
-https://api-docs.quran.com/docs/api-reference/
+- Datasets: https://qul.tarteel.ai/docs/datasets
+- API status: https://qul.tarteel.ai/docs/api
+- Data model: https://qul.tarteel.ai/docs/data-model
+- Downloading data: https://qul.tarteel.ai/docs/downloading-data
+- Resources: https://qul.tarteel.ai/resources
+- Repository: https://github.com/TarteelAI/quranic-universal-library
 
-ข้อกำหนด:
-- เรียก Content API ผ่าน Backend
-- เก็บ OAuth Client Secret เฉพาะฝั่ง Server
-- ใช้ Token Cache
-- ตรวจสอบสิทธิ์ Production API ก่อนเปิดใช้งานจริง
-- ตรวจสอบว่ามีคำแปลภาษาไทยที่ต้องการหรือไม่ก่อนกำหนด Translation ID
+**ข้อจำกัด:** QUL Public REST API ยังอยู่ระหว่างออกแบบ เอกสารแนะนำให้ดาวน์โหลด
+Resource ใน JSON หรือ SQLite จึงห้ามออกแบบระบบ production โดยพึ่ง endpoint
+`/api/v1` ที่ยังไม่เปิดให้บริการ แต่ละ Resource มีต้นทางและคุณภาพต่างกัน
+และต้องตรวจสอบสิทธิ์การจัดเก็บ แสดงผล อ้างอิง ทำดัชนี และใช้กับ AI แยกกัน
 
-## 6.2 Shamela Library
+เริ่ม MVP ด้วย Quran script ที่เลือก คำแปลภาษาไทยที่ตรวจสอบผู้แปลและสิทธิ์แล้ว
+หากมี และตำราตัฟซีรหนึ่งฉบับที่มีข้อมูลบรรณานุกรม/สิทธิ์ชัดเจน อย่าสมมติว่า
+Resource ครอบคลุมตำราตัฟซีรทั้ง 6 รายชื่อ หรือว่ามี mapping เล่ม/หน้าให้ครบ
 
-ใช้ Shamela เป็นแหล่งสำหรับกระบวนการนำเข้าตำรา (Ingestion Adapter)
+QUL tafsir candidates ที่ระบุแล้ว ได้แก่ As-Saadi (ภาษาอินโดนีเซีย), al-Tabari,
+Ibn Kathir และ Al Qurtubi ดู resource/download IDs และสถานะ review ที่
+`docs/sources/README.md` ห้ามเปิดใช้เป็น Agent corpus ก่อนตรวจภาษา ฉบับพิมพ์
+schema, mapping และสิทธิ์ของแต่ละไฟล์ โดยเฉพาะ As-Saadi resource ที่หน้าเว็บ
+แจ้งว่าไม่มีข้อมูล copyright ไม่เหมาะใช้ตอบภาษาไทยโดยไม่ติดป้ายภาษาและที่มา
 
-Repository:
-https://github.com/ragaeeb/shamela
+ปัจจุบันมีไฟล์ SQLite ของ corpus เหล่านี้อยู่ใน `data-tafsir/`; Ibn Kathir
+retrieval ใช้ไฟล์ local โดยตรงและอ้างอิง ayah/group range จากฐานข้อมูล แต่ต้อง
+คงสถานะ `UNVERIFIED` และ rights pending จนกว่าจะ review edition และการใช้งาน
 
-ไม่ควรให้ AI Agents อ่านข้อมูลจากแหล่งภายนอกโดยตรงทุกครั้ง
+## 6.2 Optional live Quran API: Quran Foundation
 
-แนวทาง:
-1. ตรวจสอบแหล่งข้อมูลและสิทธิ์การใช้งาน
-2. นำเข้าหนังสือที่ได้รับอนุญาต
-3. Extract ข้อความภาษาอาหรับ
-4. จัดเก็บ Metadata
-5. แบ่งเนื้อหาเป็นส่วนที่ค้นหาได้
-6. เชื่อมโยงเนื้อหากับ Surah และ Ayah
-7. ตรวจสอบความถูกต้องก่อนเปิดให้ Agents ใช้งาน
+Quran Foundation API เป็นตัวเลือกเสริมเมื่อมีความต้องการข้อมูล runtime
+หรือ API สดโดยเฉพาะ ไม่ใช่ dependency สำหรับการนำเข้าชุดข้อมูล QUL
+
+เอกสาร: https://api-docs.quran.com/docs/api-reference/
+
+- เรียก API ผ่าน Backend และเก็บ credential เฉพาะฝั่ง Server
+- ตรวจสอบการเข้าถึง API, ข้อกำหนดการใช้งาน, Translation ID ภาษาไทย และเงื่อนไข
+  cache ก่อนเปิดใช้จริง
+- อย่ารวมข้อมูลจาก API กับ QUL โดยไม่มีการระบุ resource/version และกฎการเลือก
+  source of truth
+
+## 6.3 Optional tafsir providers and hadith sources
+
+Shamela หรือผู้ให้บริการอื่นใช้เป็น ingestion adapter เพิ่มเติมได้เมื่อยืนยัน
+การเข้าถึง หนังสือ/ฉบับพิมพ์ และสิทธิ์การประมวลผลแล้วเท่านั้น ไม่ให้ Agents
+เรียกแหล่งภายนอกโดยตรงระหว่างตอบคำถาม ให้ import เข้าฐานข้อมูลภายในพร้อม
+metadata และ audit record
+
+Hadith corpus, chain, และ grading ต้องมาจากแหล่งที่ตรวจสอบได้แยกต่างหาก
+หมวดข้อมูลของ QUL ที่ระบุในเอกสารไม่ได้ยืนยันว่ามีบริการ hadith verification
+ครบถ้วน ห้ามอนุมาน grade หรือ isnad จากข้อความตัฟซีรเพียงอย่างเดียว
+
+## 6.4 Ingestion and source-of-truth rules
+
+ดูขั้นตอนและ acceptance checks ที่ [Data Integration Guide](docs/sources/README.md).
+
+ทุก resource ต้องมี registry record สำหรับผู้แต่ง/ผู้แปล ชื่อหนังสือ ฉบับพิมพ์
+สิทธิ์ URL/รหัส resource วันที่นำเข้า checksum/version และสถานะการตรวจสอบ
+เชื่อมข้อมูลระดับอายะฮ์ด้วย `surah_id + ayah_number` และระดับคำด้วย
+`surah_id + ayah_number + word_position`; เก็บ identifiers เดิมไว้และห้ามเติม
+เลขหน้า/เล่มที่ไม่มีใน resource
+
+QUL ระบุว่าข้อมูลจากแหล่งภายนอกอาจมีข้อผิดพลาดและคำแปลมีข้อจำกัด การ import
+จึงไม่ทำให้ข้อมูลเป็น `VERIFIED` โดยอัตโนมัติ ต้องผ่าน validation และ human
+review ก่อนให้ Agent ใช้ตอบ
 
 ---
 

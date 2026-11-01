@@ -49,29 +49,36 @@ def test_context():
 class TestIbnKathirSourceRetrieval:
     """Tests for source retrieval."""
 
-    async def test_retrieve_valid_ayah(self):
-        """Test retrieval of valid ayah sources."""
+    async def test_retrieve_without_sources_returns_empty(self):
+        """Do not fabricate source passages when no reviewed corpus is loaded."""
         retrieval = IbnKathirSourceRetrieval()
-        # Initialize with mock data
-        await retrieval.load_sources()
 
         results = await retrieval.retrieve("1:1", {}, "ma'thur", max_results=5)
-        assert len(results) > 0
-        assert results[0]["relevance_score"] > 0.3
+        assert results == []
+
+    async def test_file_loading_fails_closed(self, tmp_path):
+        """Do not treat arbitrary local files as verified source data."""
+        source_file = tmp_path / "tafsir.json"
+        source_file.write_text("{}", encoding="utf-8")
+
+        retrieval = IbnKathirSourceRetrieval()
+        with pytest.raises(NotImplementedError, match="File ingestion is not configured"):
+            await retrieval.load_sources(str(source_file))
+
+    async def test_database_loading_fails_closed(self):
+        retrieval = IbnKathirSourceRetrieval()
+        with pytest.raises(NotImplementedError, match="No approved source corpus"):
+            await retrieval.load_sources()
 
     async def test_retrieve_no_sources(self):
         """Test retrieval returns empty list for unknown ayah."""
         retrieval = IbnKathirSourceRetrieval()
-        await retrieval.load_sources()
-
         results = await retrieval.retrieve("999:999", {}, "ma'thur")
         assert results == [] or len(results) == 0
 
     async def test_cache_hits(self):
         """Test that cache works correctly."""
         retrieval = IbnKathirSourceRetrieval()
-        await retrieval.load_sources()
-
         # First retrieval should hit cache after second call
         result1 = await retrieval.retrieve("1:1", {}, "ma'thur", max_results=5)
         result2 = await retrieval.retrieve("1:1", {}, "ma'thur", max_results=5)

@@ -231,7 +231,7 @@ class IbnKathirResponseFormatter:
             # Extract excerpt with proper attribution
             excerpt = self._extract_excerpt(source)
 
-            # Determine evidence grade
+            # Preserve a grade only when the source provides one.
             grade = self._determine_source_grade(source)
 
             citation = {
@@ -241,15 +241,19 @@ class IbnKathirResponseFormatter:
                 "excerpt": excerpt,
                 "grade": grade,
                 "verified": source.get("verified", False),
-                "evidence_level": self._map_to_evidence_level(grade, source.get("verified", False)),
+                "evidence_level": self._map_to_evidence_level(source.get("verified", False)),
                 "metadata": {
                     "author": source.get("author", ""),
                     "title": source.get("title", ""),
                     "surah": source.get("surah", surah),
                     "ayah": source.get("ayah", ayah),
+                    "ayah_range": source.get("ayah_range"),
                     "volume": source.get("volume"),
                     "page": source.get("page"),
                     "language": source.get("language", "ar"),
+                    "dataset_file": source.get("dataset_file"),
+                    "resource_url": source.get("resource_url"),
+                    "rights_status": source.get("rights_status", "unknown"),
                     "relevance_score": source.get("relevance_score", 0)
                 }
             }
@@ -262,9 +266,12 @@ class IbnKathirResponseFormatter:
 
     def _determine_citation_type(self, source: Dict[str, Any]) -> str:
         """Determine citation type based on source metadata."""
-        source_type = source.get("type", "tafsir")
+        source_type = source.get("type")
         author = source.get("author", "")
         title = source.get("title", "")
+
+        if source.get("source_backend") == "qul_sqlite" or source_type == "tafsir":
+            return "tafsir"
 
         # Check if it's a Quran reference
         if source.get("surah") and source.get("ayah"):
@@ -289,11 +296,15 @@ class IbnKathirResponseFormatter:
             # Tafsir reference
             author = source.get("author", "Ibn Kathir")
             title = source.get("title", "")
+            ayah_range = source.get("ayah_range")
 
             if title:
-                return f"{author} - {title}"
+                reference = f"{author} - {title}"
             else:
-                return f"{author} - Tafsir"
+                reference = f"{author} - Tafsir"
+            if ayah_range:
+                reference += f" (Ayah {ayah_range})"
+            return reference
 
     def _extract_excerpt(self, source: Dict[str, Any]) -> str:
         """Extract excerpt from source with proper attribution."""
@@ -315,7 +326,7 @@ class IbnKathirResponseFormatter:
 
     def _determine_source_grade(self, source: Dict[str, Any]) -> Dict[str, Any]:
         """Determine source grade (evidence grade)."""
-        source_grade = source.get("grading", "sahih")
+        source_grade = source.get("grading", "unknown")
 
         # Map to standardized grade format
         grade_mapping = {
@@ -323,30 +334,17 @@ class IbnKathirResponseFormatter:
             "hasan": {"level": "hasan", "confidence": 0.85},
             "daif": {"level": "daif", "confidence": 0.60},
             "maudu": {"level": "maudu", "confidence": 0.30},
-            "unknown": {"level": "daif", "confidence": 0.40}
+            "unknown": {"level": "unknown", "confidence": 0.0}
         }
 
         return grade_mapping.get(source_grade, grade_mapping["unknown"])
 
-    def _map_to_evidence_level(self, grade: Dict[str, Any], verified: bool) -> str:
-        """Map source grade to evidence level."""
-        grade_level = grade.get("level", "unknown")
-        grade_confidence = grade.get("confidence", 0.5)
-
-        if verified and grade_level == "sahih" and grade_confidence > 0.9:
+    def _map_to_evidence_level(self, verified: bool) -> str:
+        """Map source-text verification to the citation evidence level."""
+        if verified:
             return "VERIFIED"
 
-        elif verified and grade_level in ["sahih", "hasan"] and grade_confidence > 0.7:
-            return "SOURCE-ATTRIBUTED"
-
-        elif not verified:
-            return "UNVERIFIED"
-
-        elif grade_level == "daif":
-            return "UNVERIFIED"
-
-        else:
-            return "AI SYNTHESIS"
+        return "UNVERIFIED"
 
     def _analyze_disagreement(self, sources: List[Dict[str, Any]]) -> str:
         """
@@ -448,27 +446,16 @@ class IbnKathirResponseFormatter:
         if not sources:
             return "UNVERIFIED"
 
-        # Check for high-quality verified sources
-        verified_sahih = sum(1 for source in sources
-                           if source.get("verified", False) and
-                              source.get("grading", "") == "sahih")
-
-        # Check for source-attributed sources
-        source_attributed = sum(1 for source in sources
-                               if source.get("verified", False) and
-                                  source.get("grading", "") in ["sahih", "hasan"])
-
-        # Check for unverified sources
+        verified = sum(1 for source in sources if source.get("verified", False))
         unverified = sum(1 for source in sources if not source.get("verified", False))
 
-        # Determine based on source quality
-        if verified_sahih >= 2 and unverified == 0:
+        if verified == len(sources):
             return "VERIFIED"
 
-        elif source_attributed >= 1 and unverified / len(sources) <= 0.5:
+        elif verified > 0 and unverified / len(sources) <= 0.5:
             return "SOURCE-ATTRIBUTED"
 
-        elif unverified / len(sources) > 0.5:
+        elif unverified > 0:
             return "UNVERIFIED"
 
         else:

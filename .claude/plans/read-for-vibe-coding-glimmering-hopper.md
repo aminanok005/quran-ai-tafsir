@@ -49,9 +49,9 @@ The project is at Phase 0 (Research & Foundation) with extensive documentation b
 
 ### Phase 1: Foundation (Weeks 1-2)
 1. Set up shared types package with comprehensive type definitions
-2. Implement Quran Foundation API adapter in services/api
+2. Implement QUL JSON/SQLite ingestion for an approved Quran resource; add Quran Foundation API only for a verified runtime need
 3. Create basic database schema and migrations
-4. Set up Redis and vector database infrastructure
+4. Add Redis/vector infrastructure only when an MVP workload demonstrates the need
 
 ### Phase 2: Core MVP (Weeks 3-6)
 1. Implement Quran Reader UI with Thai/Arabic/English support
@@ -68,11 +68,13 @@ The project is at Phase 0 (Research & Foundation) with extensive documentation b
 ## Key Technical Requirements
 
 ### 1. Quran Data Pipeline
-- Integrate Quran Foundation API (OAuth2 secured)
+- Start with reviewed QUL downloads (JSON for inspection, SQLite for larger resources)
+- Keep Quran Foundation API as an optional backend adapter; store credentials server-side
 - Implement Arabic text preservation
 - Support Thai/English translations
 - Audio recitation integration
 - Word-by-word breakdown
+- Verify resource rights, versions, Arabic integrity, and ayah mappings before publication
 
 ### 2. Agent Architecture
 - Source-grounded AI (no fabricated references)
@@ -115,11 +117,11 @@ The project is at Phase 0 (Research & Foundation) with extensive documentation b
    - Concurrent agent processing
 
 ## Dependencies
-- PostgreSQL + pgvector
-- Redis
-- Quran Foundation API access
+- PostgreSQL; pgvector when semantic candidate discovery is needed
+- Approved QUL resource downloads for the initial Quran/translation/tafsir corpus
+- Quran Foundation API access only if an approved runtime use case requires it
 - LLM provider (OpenAI/Anthropic/Gemini)
-- Shamela Library integration
+- Shamela or other providers only as optional adapters after access and rights review
 
 ## Timeline
 - **Week 1-2**: Foundation and API integration

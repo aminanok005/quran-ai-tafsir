@@ -8,8 +8,8 @@
     "packages/*"
   ],
   "scripts": {
-    "dev:web": "bun --cwd apps/web dev",
-    "build:web": "bun --cwd apps/web run build",
+    "dev:web": "cd apps/web && bun run dev",
+    "build:web": "cd apps/web && bun run build",
     "lint": "bun --workspaces --if-present run lint",
     "typecheck": "bun --workspaces --if-present run typecheck",
     "test": "bun --workspaces --if-present run test",

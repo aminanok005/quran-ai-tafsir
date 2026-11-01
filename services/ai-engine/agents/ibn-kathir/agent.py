@@ -22,7 +22,7 @@ from ....shared_types import (
     TafsirExplanation, EvidenceLevel, EvidenceGrade,
     RetrievedSource, AgentOutput, CitationReference
 )
-from .source_retrieval import IbnKathirSourceRetrieval
+from services.tafsir.source_retrieval import TafsirSourceRetrieval
 from .citation_validator import CitationValidator
 from .response_formatter import IbnKathirResponseFormatter
 
@@ -47,7 +47,9 @@ class IbnKathirAgent:
         self.quality_gates = config.get("quality_gates", [])
 
         # Initialize dependencies
-        self.source_retrieval = IbnKathirSourceRetrieval()
+        self.source_retrieval = TafsirSourceRetrieval(
+            source_path=config.get("source_path")
+        )
         self.citation_validator = CitationValidator()
         self.response_formatter = IbnKathirResponseFormatter()
 
@@ -214,6 +216,19 @@ class IbnKathirAgent:
         valid_sources = []
 
         for source in sources:
+            if source.get("source_backend") == "qul_sqlite":
+                if source.get("original_text") and source.get("ayah_key"):
+                    source["verified"] = False
+                    source["validation_result"] = {
+                        "status": "source_attributed_unverified",
+                        "note": (
+                            "Passage was retrieved from the configured local dataset; "
+                            "scholarly verification and usage rights are not yet reviewed."
+                        ),
+                    }
+                    valid_sources.append(source)
+                continue
+
             try:
                 # Validate source authenticity
                 is_valid, validation_result = await self.citation_validator.validate(
@@ -242,6 +257,14 @@ class IbnKathirAgent:
                 valid_sources.append(source)
 
         return valid_sources
+
+    def _is_source_quality_acceptable(self, source: Dict[str, Any]) -> bool:
+        return bool(
+            source.get("source_id")
+            and source.get("author")
+            and source.get("title")
+            and source.get("excerpt", "").strip()
+        )
 
     async def _generate_explanation(self, ayah_id: str, sources: List[Dict[str, Any]], context: Dict[str, Any]) -> str:
         """
@@ -337,8 +360,8 @@ class IbnKathirAgent:
         Returns:
             Formatted prompt
         """
-        prompt = f"""You are Ibn Kathir's Tafsir agent, providing explanations based on
-Quran, authentic Hadith, and reports from the Salaf.
+        prompt = f"""You are an AI research assistant presenting material from Ibn Kathir's
+Tafsir, not Ibn Kathir himself. Use only the retrieved source passages.
 
 AYAH CONTEXT:
 Surah {surah_number}:{ayah_number}
@@ -348,20 +371,23 @@ AVAILABLE SOURCES (from Ibn Kathir's tafsir):
 {source_material}
 
 METHODOLOGY:
-Tafsir bil-Ma''thur - using Quran, authentic Hadith, and reports from the Salaf.
+Tafsir bil-Ma''thur: Quran, Hadith reports, and reports from the Salaf.
 
 REQUIREMENTS:
 1. Only use information from the provided sources above
 2. Cite your sources when referencing specific content
 3. Distinguish between:
    - Direct Quranic quotes
-   - Authentic Hadith reports
+   - Hadith reports and any grading explicitly present in the source
    - Reports from Sahabah (Companions)
    - Reports from Tabi'in (Successors)
 4. Identify and flag Isra'iliyyat reports
 5. Use Thai language for explanation
 6. Maintain scholarly accuracy and authenticity
 7. Generate a comprehensive explanation suitable for study
+8. Treat local QUL passages as unverified until independently reviewed
+9. Do not invent volume, page, edition, hadith grading, or chain details
+10. Do not infer a hadith grade from an ungraded tafsir passage
 
 EXPLANATION:
 """
@@ -548,6 +574,12 @@ Verified: {'Yes' if verified else 'No'}
         Returns:
             Context match score between 0 and 1
         """
+        if source.get("source_backend") == "qul_sqlite":
+            ayah_id = context.get(
+                "ayah_id", f"{context.get('surah', '')}:{context.get('ayah', '')}"
+            )
+            return 1.0 if source.get("ayah_key") == ayah_id else 0.0
+
         # Simple heuristic based on source metadata
         surah_match = 0.5
         ayah_match = 0.5

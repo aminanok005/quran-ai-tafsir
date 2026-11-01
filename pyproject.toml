@@ -5,6 +5,7 @@ description = "Backend, AI orchestration and source-ingestion services for QURAN
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.104.0",
+    "httpx>=0.25.0",
     "uvicorn>=0.24.0",
     "sqlalchemy>=2.0.0",
     "postgresql>=4.0.0",
