@@ -41,35 +41,3 @@ export async function forwardBackendRequest(
     );
   }
 }
-
-export async function forwardQuranRequest(path: string): Promise<Response> {
-  try {
-    const upstream = await fetch(`https://api.alquran.cloud/v1${path}`, {
-      next: { revalidate: 86_400 },
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(15_000),
-    });
-    const body = await upstream.text();
-    try {
-      return Response.json(JSON.parse(body), {
-        status: upstream.ok ? 200 : upstream.status,
-        headers: {
-          "Cache-Control": upstream.ok
-            ? "public, s-maxage=86400, stale-while-revalidate=3600"
-            : "no-store",
-        },
-      });
-    } catch {
-      return Response.json(
-        { detail: "Quran text provider returned an invalid response" },
-        { status: 502, headers: { "Cache-Control": "no-store" } },
-      );
-    }
-  } catch (error) {
-    const detail =
-      error instanceof Error && error.name === "TimeoutError"
-        ? "Quran text request timed out"
-        : "Could not reach the Quran text provider";
-    return Response.json({ detail }, { status: 503, headers: { "Cache-Control": "no-store" } });
-  }
-}

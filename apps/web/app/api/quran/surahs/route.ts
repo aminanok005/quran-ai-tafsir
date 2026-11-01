@@ -1,7 +1,7 @@
-import { forwardQuranRequest } from "@/lib/server-api";
+import { forwardBackendRequest } from "@/lib/server-api";
 
 export const dynamic = "force-dynamic";
 
 export function GET() {
-  return forwardQuranRequest("/surah");
+  return forwardBackendRequest("/api/v1/quran/surahs");
 }

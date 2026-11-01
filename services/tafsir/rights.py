@@ -12,6 +12,11 @@ REQUIRED_SOURCE_IDS = {
     f"qul:{Path(filename).stem}"
     for filename in [*DEFAULT_DATABASES.values(), "id-tafsir-as-saadi.db"]
 }
+OPTIONAL_SOURCE_IDS = {
+    "qul:surah-info-id",
+    "qul:qpc-v4-tajweed-15-lines",
+}
+KNOWN_SOURCE_IDS = REQUIRED_SOURCE_IDS | OPTIONAL_SOURCE_IDS
 ALLOWED_USES = {
     "display",
     "quotation",
@@ -84,7 +89,7 @@ def validate_rights_manifest_structure(manifest: Dict[str, Any]) -> List[str]:
     if "schema_version" in manifest and manifest["schema_version"] != 1:
         issues.append("unsupported schema_version")
     for source_id in sources:
-        if source_id not in REQUIRED_SOURCE_IDS:
+        if source_id not in KNOWN_SOURCE_IDS:
             issues.append(f"{source_id}: unknown source ID")
     for source_id, permission in sources.items():
         if not isinstance(permission, dict):

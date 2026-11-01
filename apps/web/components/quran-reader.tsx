@@ -11,12 +11,52 @@ type Surah = {
   revelationType: string;
 };
 
+type SurahBackground = {
+  surah_number: number;
+  surah_name: string;
+  short_text: string;
+  text: string;
+  language: "id";
+  source: string;
+  source_id: string;
+  rights_status: string;
+  rights_allowed_uses: string[];
+};
+
+type MushafLayoutLine = {
+  line_number: number;
+  line_type: "ayah" | "basmallah" | "surah_name";
+  is_centered: boolean;
+  surah_number?: number;
+  verse_keys?: string[];
+};
+
+type MushafLayoutPage = {
+  name: string;
+  page_number: number;
+  total_pages: number;
+  lines_per_page: number;
+  font_name: string;
+  font_status: string;
+  glyph_rendering_enabled: boolean;
+  source: string;
+  source_id: string;
+  rights_status: string;
+  lines: MushafLayoutLine[];
+};
+
 type Ayah = {
   number: number;
   numberInSurah: number;
   text: string;
   translation?: string;
   audio?: string;
+  script_type?: string;
+  font_family?: string;
+  words?: Array<{ position: number; text: string; location: string }>;
+  page_number?: number;
+  juz_number?: number;
+  hizb_number?: number;
 };
 
 type Agent = {
@@ -110,39 +150,31 @@ async function responseJson<T>(response: Response): Promise<T> {
 
 async function fetchQuranData<T>(
   proxyPath: string,
-  providerPath: string,
   signal: AbortSignal,
 ): Promise<T> {
-  let proxyResponse: Response | null = null;
-  try {
-    proxyResponse = await fetch(proxyPath, {
-      cache: "no-store",
-      signal,
-    });
-  } catch (error) {
-    if (signal.aborted) throw error;
-  }
-
-  if (proxyResponse && proxyResponse.status !== 503) {
-    return responseJson<T>(proxyResponse);
-  }
-
-  const providerResponse = await fetch(
-    `https://api.alquran.cloud/v1${providerPath}`,
-    { signal },
-  );
-  return responseJson<T>(providerResponse);
+  const response = await fetch(proxyPath, { cache: "no-store", signal });
+  return responseJson<T>(response);
 }
 
 export default function QuranReader() {
   const [surahs, setSurahs] = useState<Surah[]>([]);
   const [surahNumber, setSurahNumber] = useState(1);
+  const [surahSearch, setSurahSearch] = useState("");
+  const [surahBackground, setSurahBackground] = useState<SurahBackground | null>(null);
+  const [surahBackgroundLoading, setSurahBackgroundLoading] = useState(false);
+  const [surahBackgroundError, setSurahBackgroundError] = useState("");
+  const [mushafPageNumber, setMushafPageNumber] = useState(1);
+  const [mushafLayoutOpen, setMushafLayoutOpen] = useState(false);
+  const [mushafLayout, setMushafLayout] = useState<MushafLayoutPage | null>(null);
+  const [mushafLayoutLoading, setMushafLayoutLoading] = useState(false);
+  const [mushafLayoutError, setMushafLayoutError] = useState("");
   const [ayahs, setAyahs] = useState<Ayah[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedAyah, setSelectedAyah] = useState<Ayah | null>(null);
   const [selectedAyahSurahNumber, setSelectedAyahSurahNumber] = useState<number | null>(null);
   const [selectedAgentKey, setSelectedAgentKey] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [studyTab, setStudyTab] = useState<"overview" | "sources">("overview");
   const [compareMode, setCompareMode] = useState(false);
   const [compareAgentKeys, setCompareAgentKeys] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
@@ -164,17 +196,10 @@ export default function QuranReader() {
   const [readerError, setReaderError] = useState("");
   const [agentError, setAgentError] = useState("");
   const [chatError, setChatError] = useState("");
-  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const dialogRef = useRef<HTMLElement>(null);
-  const triggerElementRef = useRef<HTMLElement | null>(null);
   const lastRead = studyStorage.history[0] ?? null;
 
   const studyAyah = useCallback((ayah: Ayah, selectedSurahNumber: number) => {
-    if (!selectedAyah) {
-      triggerElementRef.current =
-        document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    }
     const surah = surahs.find((item) => item.number === selectedSurahNumber);
     const record: StudyRecord = {
       surahNumber: selectedSurahNumber,
@@ -196,6 +221,7 @@ export default function QuranReader() {
     }));
     setSelectedAyahSurahNumber(selectedSurahNumber);
     setSelectedAyah(ayah);
+    setStudyTab("overview");
     setMessages([]);
     setDraft("");
     setChatError("");
@@ -203,18 +229,33 @@ export default function QuranReader() {
       `ayah-${selectedSurahNumber}-${ayah.numberInSurah}`,
     );
     ayahRow?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [selectedAyah, surahs]);
+  }, [surahs]);
 
   const selectedAgent = useMemo(
     () => agents.find((agent) => agentKey(agent) === selectedAgentKey) ?? null,
     [agents, selectedAgentKey],
+  );
+  const filteredSurahs = useMemo(() => {
+    const query = surahSearch.trim().toLocaleLowerCase();
+    if (!query) return surahs;
+    return surahs.filter((surah) =>
+      [
+        String(surah.number),
+        surah.name,
+        surah.englishName,
+        surah.englishNameTranslation,
+      ].some((value) => value.toLocaleLowerCase().includes(query)),
+    );
+  }, [surahSearch, surahs]);
+  const citationSources = useMemo(
+    () => messages.flatMap((message) => message.sources ?? []),
+    [messages],
   );
 
   useEffect(() => {
     const controller = new AbortController();
     fetchQuranData<{ data: Surah[] }>(
       "/api/quran/surahs",
-      "/surah",
       controller.signal,
     )
       .then((result) => setSurahs(result.data))
@@ -232,6 +273,55 @@ export default function QuranReader() {
 
   useEffect(() => {
     const controller = new AbortController();
+    setSurahBackground(null);
+    setSurahBackgroundError("");
+    setSurahBackgroundLoading(true);
+    fetchQuranData<{ data: SurahBackground }>(
+      `/api/quran/surahs/${surahNumber}/info`,
+      controller.signal,
+    )
+      .then((result) => setSurahBackground(result.data))
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setSurahBackgroundError(
+            error instanceof Error ? error.message : "โหลดข้อมูลบริบทซูเราะฮ์ไม่สำเร็จ",
+          );
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setSurahBackgroundLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [surahNumber]);
+
+  useEffect(() => {
+    if (!mushafLayoutOpen) return;
+    const controller = new AbortController();
+    setMushafLayout(null);
+    setMushafLayoutError("");
+    setMushafLayoutLoading(true);
+    fetchQuranData<{ data: MushafLayoutPage }>(
+      `/api/quran/mushaf/15-line/pages/${mushafPageNumber}`,
+      controller.signal,
+    )
+      .then((result) => setMushafLayout(result.data))
+      .catch((error: unknown) => {
+        if (!controller.signal.aborted) {
+          setMushafLayoutError(
+            error instanceof Error ? error.message : "โหลดข้อมูลผังหน้ามุศหัฟไม่สำเร็จ",
+          );
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setMushafLayoutLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [mushafLayoutOpen, mushafPageNumber]);
+
+  useEffect(() => {
+    const controller = new AbortController();
     setLoadingAyahs(true);
     setLoadedSurahNumber(0);
     setReaderError("");
@@ -242,20 +332,17 @@ export default function QuranReader() {
     setAudioAyah(null);
     setIsPlaying(false);
     fetchQuranData<{ data: { ayahs: Ayah[] } }>(
-      `/api/quran/surahs/${surahNumber}`,
-      `/surah/${surahNumber}/quran-uthmani`,
+      `/api/quran/surahs/${surahNumber}?edition=quran-uthmani`,
       controller.signal,
     )
       .then(async (arabicResult) => {
         const [translationResult, recitationResult] = await Promise.allSettled([
           fetchQuranData<{ data: { ayahs: Ayah[] } }>(
             `/api/quran/surahs/${surahNumber}?edition=th.thai`,
-            `/surah/${surahNumber}/th.thai`,
             controller.signal,
           ),
           fetchQuranData<{ data: { ayahs: Ayah[] } }>(
             `/api/quran/surahs/${surahNumber}?edition=ar.alafasy`,
-            `/surah/${surahNumber}/ar.alafasy`,
             controller.signal,
           ),
         ]);
@@ -373,34 +460,12 @@ export default function QuranReader() {
 
   useEffect(() => {
     if (!selectedAyah) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    closeButtonRef.current?.focus();
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setSelectedAyah(null);
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href], input:not(:disabled)',
-      );
-      if (!focusable?.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
+      if (event.key === "Escape") setSelectedAyah(null);
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => {
-      document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", closeOnEscape);
-      if (triggerElementRef.current?.isConnected) triggerElementRef.current.focus();
     };
   }, [selectedAyah]);
 
@@ -608,21 +673,131 @@ export default function QuranReader() {
         </div>
       </header>
 
-      <section className="hero">
-        <div className="hero-pattern" aria-hidden="true" />
-        <div className="hero-inner">
-          <span className="eyebrow"><span className="eyebrow-dot" /> QURAN STUDY SPACE</span>
-          <h1>อ่านด้วยหัวใจ<br /><em>เข้าใจด้วยหลักฐาน</em></h1>
-          <p>เลือกอายะฮ์เพื่อศึกษาคำอธิบายจากหนังสือตัฟซีร พร้อมข้อความต้นฉบับและที่มา</p>
-        </div>
-        <div className="hero-seal" aria-hidden="true"><span>اقْرَأْ</span><i>✳</i></div>
-      </section>
+      <div className="study-workspace">
+        <aside className="surah-sidebar" aria-label="นำทางอัลกุรอาน">
+          <div className="sidebar-heading">
+            <span className="section-kicker">LIBRARY</span>
+            <h2>คลังอัลกุรอาน</h2>
+          </div>
+          <div className="sidebar-shortcuts">
+            <button
+              type="button"
+              className={studyList === "bookmarks" ? "sidebar-shortcut is-active" : "sidebar-shortcut"}
+              aria-pressed={studyList === "bookmarks"}
+              onClick={() => setStudyList((current) => current === "bookmarks" ? null : "bookmarks")}
+            >
+              <span aria-hidden="true">☆</span>
+              <span>บันทึกไว้</span>
+              <small>{studyStorage.bookmarks.length}</small>
+            </button>
+            <button
+              type="button"
+              className={studyList === "history" ? "sidebar-shortcut is-active" : "sidebar-shortcut"}
+              aria-pressed={studyList === "history"}
+              onClick={() => setStudyList((current) => current === "history" ? null : "history")}
+            >
+              <span aria-hidden="true">◷</span>
+              <span>ประวัติอ่าน</span>
+            </button>
+          </div>
+          {studyList && (
+            <section className="study-list-panel" aria-label={studyList === "bookmarks" ? "อายะฮ์ที่บันทึกไว้" : "ประวัติการอ่าน"}>
+              <div className="study-list-heading">
+                <h3>{studyList === "bookmarks" ? "อายะฮ์ที่บันทึกไว้" : "อายะฮ์ที่ศึกษาเมื่อเร็ว ๆ นี้"}</h3>
+                <button type="button" className="text-button" onClick={() => setStudyList(null)}>
+                  ปิด
+                </button>
+              </div>
+              {(studyList === "bookmarks" ? studyStorage.bookmarks : studyStorage.history).length === 0 ? (
+                <p className="study-list-empty">
+                  {studyList === "bookmarks" ? "ยังไม่มีอายะฮ์ที่บันทึกไว้ กด “บันทึก” ใต้ข้อความอายะฮ์เพื่อเก็บไว้อ่านภายหลัง" : "อายะฮ์ที่เปิดศึกษาไว้จะแสดงที่นี่"}
+                </p>
+              ) : (
+                <ul>
+                  {(studyList === "bookmarks" ? studyStorage.bookmarks : studyStorage.history).map((record) => (
+                    <li key={`${record.surahNumber}:${record.ayahNumber}`}>
+                      <button
+                        type="button"
+                        className="study-list-item"
+                        onClick={() => jumpToStudy(record)}
+                      >
+                        <strong>{record.surahName} · {record.surahNumber}:{record.ayahNumber}</strong>
+                        <span lang="ar" dir="rtl">{record.ayahText}</span>
+                      </button>
+                      {studyList === "bookmarks" && (
+                        <button
+                          type="button"
+                          className="remove-bookmark"
+                          aria-label={`ลบอายะฮ์ ${record.surahNumber}:${record.ayahNumber} จากรายการบันทึก`}
+                          onClick={() =>
+                            setStudyStorage((current) => ({
+                              ...current,
+                              bookmarks: current.bookmarks.filter(
+                                (item) =>
+                                  item.surahNumber !== record.surahNumber ||
+                                  item.ayahNumber !== record.ayahNumber,
+                              ),
+                            }))
+                          }
+                        >
+                          ลบ
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
+          {lastRead && (
+            <button type="button" className="sidebar-last-read" onClick={() => jumpToStudy(lastRead)}>
+              <span>อ่านต่อจากเดิม</span>
+              <strong>{lastRead.surahName} · {lastRead.surahNumber}:{lastRead.ayahNumber}</strong>
+            </button>
+          )}
+          <label className="surah-search">
+            <span className="sr-only">ค้นหาซูเราะฮ์</span>
+            <span aria-hidden="true">⌕</span>
+            <input
+              type="search"
+              value={surahSearch}
+              onChange={(event) => setSurahSearch(event.target.value)}
+              placeholder="ค้นหาซูเราะฮ์"
+              aria-label="ค้นหาซูเราะฮ์"
+            />
+          </label>
+          <nav className="surah-list" aria-label="รายการซูเราะฮ์">
+            {loadingSurahs && <p className="sidebar-status">กำลังโหลดซูเราะฮ์…</p>}
+            {!loadingSurahs && filteredSurahs.length === 0 && (
+              <p className="sidebar-status">ไม่พบซูเราะฮ์ที่ค้นหา</p>
+            )}
+            {filteredSurahs.map((surah) => (
+              <button
+                type="button"
+                key={surah.number}
+                className={surah.number === surahNumber ? "surah-list-item is-active" : "surah-list-item"}
+                aria-current={surah.number === surahNumber ? "page" : undefined}
+                onClick={() => setSurahNumber(surah.number)}
+              >
+                <span className="surah-list-number">{surah.number}</span>
+                <span className="surah-list-name">
+                  <strong>{surah.englishName}</strong>
+                  <small>{surah.englishNameTranslation}</small>
+                </span>
+                <span className="surah-list-arabic" lang="ar" dir="rtl">{surah.name}</span>
+              </button>
+            ))}
+          </nav>
+          <p className="sidebar-footnote">١١٤ ซูเราะฮ์ · มุศหัฟมาตรฐาน</p>
+        </aside>
 
       <section className="reader-section" aria-label="เครื่องอ่านอัลกุรอาน">
         <div className="reader-toolbar">
           <div className="reader-title">
-            <span className="section-kicker">อัลกุรอาน</span>
-            <h2>อ่านและศึกษา</h2>
+            <span className="section-kicker">
+              {currentSurah ? `SURAH ${String(currentSurah.number).padStart(3, "0")}` : "QURAN READER"}
+            </span>
+            <h2>{currentSurah?.englishName ?? "อัลกุรอาน"}</h2>
           </div>
           <div className="reader-tools">
             <div className="surah-navigation" aria-label="นำทางระหว่างซูเราะฮ์">
@@ -660,27 +835,9 @@ export default function QuranReader() {
                 ถัดไป →
               </button>
             </div>
-            <div className="study-shortcuts">
-              <button
-                type="button"
-                className={studyList === "bookmarks" ? "secondary-button is-active" : "secondary-button"}
-                aria-pressed={studyList === "bookmarks"}
-                onClick={() =>
-                  setStudyList((current) => current === "bookmarks" ? null : "bookmarks")
-                }
-              >
-                บันทึกไว้ <span>{studyStorage.bookmarks.length}</span>
-              </button>
-              <button
-                type="button"
-                className={studyList === "history" ? "secondary-button is-active" : "secondary-button"}
-                aria-pressed={studyList === "history"}
-                onClick={() =>
-                  setStudyList((current) => current === "history" ? null : "history")
-                }
-              >
-                ประวัติอ่าน
-              </button>
+            <div className="script-status">
+              <strong>อุษมานี</strong>
+              <small>QPC V4 Tajweed ยังไม่เผยแพร่</small>
             </div>
           </div>
         </div>
@@ -695,56 +852,6 @@ export default function QuranReader() {
               อ่านต่อ →
             </button>
           </div>
-        )}
-
-        {studyList && (
-          <section className="study-list-panel" aria-label={studyList === "bookmarks" ? "อายะฮ์ที่บันทึกไว้" : "ประวัติการอ่าน"}>
-            <div className="study-list-heading">
-              <h3>{studyList === "bookmarks" ? "อายะฮ์ที่บันทึกไว้" : "อายะฮ์ที่ศึกษาเมื่อเร็ว ๆ นี้"}</h3>
-              <button type="button" className="text-button" onClick={() => setStudyList(null)}>
-                ปิด
-              </button>
-            </div>
-            {(studyList === "bookmarks" ? studyStorage.bookmarks : studyStorage.history).length === 0 ? (
-              <p className="study-list-empty">
-                {studyList === "bookmarks" ? "ยังไม่มีอายะฮ์ที่บันทึกไว้ กด “บันทึก” ใต้ข้อความอายะฮ์เพื่อเก็บไว้อ่านภายหลัง" : "อายะฮ์ที่เปิดศึกษาไว้จะแสดงที่นี่"}
-              </p>
-            ) : (
-              <ul>
-                {(studyList === "bookmarks" ? studyStorage.bookmarks : studyStorage.history).map((record) => (
-                  <li key={`${record.surahNumber}:${record.ayahNumber}`}>
-                    <button
-                      type="button"
-                      className="study-list-item"
-                      onClick={() => jumpToStudy(record)}
-                    >
-                      <strong>{record.surahName} · {record.surahNumber}:{record.ayahNumber}</strong>
-                      <span lang="ar" dir="rtl">{record.ayahText}</span>
-                    </button>
-                    {studyList === "bookmarks" && (
-                      <button
-                        type="button"
-                        className="remove-bookmark"
-                        aria-label={`ลบอายะฮ์ ${record.surahNumber}:${record.ayahNumber} จากรายการบันทึก`}
-                        onClick={() =>
-                          setStudyStorage((current) => ({
-                            ...current,
-                            bookmarks: current.bookmarks.filter(
-                              (item) =>
-                                item.surahNumber !== record.surahNumber ||
-                                item.ayahNumber !== record.ayahNumber,
-                            ),
-                          }))
-                        }
-                      >
-                        ลบ
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
         )}
 
         {storageError && <p className="notice notice-error" role="status">{storageError} ข้อมูลส่วนนี้เก็บในอุปกรณ์ของคุณเท่านั้น</p>}
@@ -781,6 +888,115 @@ export default function QuranReader() {
           </div>
         )}
 
+        {surahBackgroundLoading && (
+          <p className="surah-background-status" role="status">กำลังโหลดบริบทซูเราะฮ์…</p>
+        )}
+        {surahBackgroundError && (
+          <p className="notice notice-warning surah-background-status" role="status">
+            {surahBackgroundError}
+          </p>
+        )}
+        {surahBackground && (
+          <details className="surah-background">
+            <summary>อ่านบริบทซูเราะฮ์ · ภาษาอินโดนีเซีย</summary>
+            <div className="surah-background-content">
+              {surahBackground.short_text && (
+                <p className="surah-background-summary">{surahBackground.short_text}</p>
+              )}
+              <details className="surah-background-full">
+                <summary>อ่านรายละเอียดฉบับเต็ม</summary>
+                <div className="surah-background-paragraphs">
+                  {surahBackground.text.split(/\n{2,}/).map((paragraph, index) => (
+                    <p key={`${surahBackground.surah_number}-${index}`}>{paragraph}</p>
+                  ))}
+                </div>
+              </details>
+              <p className="surah-background-attribution">
+                ที่มา: {surahBackground.source} · เนื้อหาบริบทเพื่อประกอบการอ่าน ไม่ใช่คำวินิจฉัยตัฟซีร
+              </p>
+            </div>
+          </details>
+        )}
+
+        <details
+          className="mushaf-layout"
+          open={mushafLayoutOpen}
+          onToggle={(event) => setMushafLayoutOpen(event.currentTarget.open)}
+        >
+          <summary>ผังมุศหัฟ KFGQPC V4 · 15 บรรทัด · 604 หน้า</summary>
+          <div className="mushaf-layout-content">
+            <div className="mushaf-layout-controls">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={mushafPageNumber <= 1 || mushafLayoutLoading}
+                onClick={() => setMushafPageNumber((page) => Math.max(1, page - 1))}
+              >
+                ← ก่อนหน้า
+              </button>
+              <label>
+                หน้า
+                <input
+                  type="number"
+                  min={1}
+                  max={604}
+                  value={mushafPageNumber}
+                  onChange={(event) => {
+                    const page = Number(event.currentTarget.value);
+                    if (Number.isInteger(page) && page >= 1 && page <= 604) {
+                      setMushafPageNumber(page);
+                    }
+                  }}
+                  aria-label="เลือกหน้ามุศหัฟ"
+                />
+                / 604
+              </label>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={mushafPageNumber >= 604 || mushafLayoutLoading}
+                onClick={() => setMushafPageNumber((page) => Math.min(604, page + 1))}
+              >
+                ถัดไป →
+              </button>
+            </div>
+            {mushafLayoutLoading && <p role="status">กำลังโหลดผังหน้า…</p>}
+            {mushafLayoutError && (
+              <p className="notice-error" role="status">{mushafLayoutError}</p>
+            )}
+            {mushafLayout && (
+              <>
+                <p className="mushaf-layout-note">
+                  แสดงเฉพาะตำแหน่งบรรทัดและช่วงอายะฮ์ ไม่แสดง glyph V4 เพราะฟอนต์ยังไม่เผยแพร่
+                  · สิทธิ์แสดงผล: {mushafLayout.rights_status}
+                </p>
+                <ol className="mushaf-layout-lines">
+                  {mushafLayout.lines.map((line) => {
+                    const surahTitle = line.surah_number
+                      ? surahs.find((item) => item.number === line.surah_number)?.name
+                      : null;
+                    const content =
+                      line.line_type === "surah_name"
+                        ? `ชื่อซูเราะฮ์${surahTitle ? ` · ${surahTitle}` : ""}`
+                        : line.line_type === "basmallah"
+                          ? "บิสมิลลาฮ์"
+                          : line.verse_keys?.join(" · ") ?? "ตำแหน่งอายะฮ์";
+                    return (
+                      <li
+                        key={`${mushafLayout.page_number}-${line.line_number}`}
+                        className={line.is_centered ? "is-centered" : ""}
+                      >
+                        <span>บรรทัด {line.line_number}</span>
+                        <strong dir="auto">{content}</strong>
+                      </li>
+                    );
+                  })}
+                </ol>
+              </>
+            )}
+          </div>
+        </details>
+
         {readerError && <p className="notice notice-error" role="alert">{readerError}</p>}
         {translationError && <p className="notice notice-warning" role="status">{translationError} แต่ยังอ่านอาหรับและศึกษาส่วนอื่นได้</p>}
         {audioError && <p className="notice notice-warning" role="status">{audioError}</p>}
@@ -809,6 +1025,18 @@ export default function QuranReader() {
                     <span>{toArabicDigits(ayah.numberInSurah)}</span>
                   </span>
                 </button>
+                {ayah.words && ayah.words.length > 0 && (
+                  <details className="ayah-words">
+                    <summary>ดูคำตามตำแหน่ง</summary>
+                    <div className="ayah-word-list" lang="ar" dir="rtl">
+                      {ayah.words.map((word) => (
+                        <span key={word.location} title={word.location}>
+                          <small>{toArabicDigits(word.position)}</small> {word.text}
+                        </span>
+                      ))}
+                    </div>
+                  </details>
+                )}
                 <p className="ayah-translation" lang="th">
                   {ayah.translation ?? (translationError ? "ยังไม่มีคำแปลสำหรับอายะฮ์นี้" : "กำลังโหลดคำแปล…")}
                 </p>
@@ -859,39 +1087,23 @@ export default function QuranReader() {
             <a href="https://api.alquran.cloud/v1/edition/th.thai" target="_blank" rel="noreferrer">
               King Fahad Quran Complex
             </a>
-            {" · "}บุ๊กมาร์กและประวัติเก็บในอุปกรณ์นี้
+            {" · "}ผังหน้า KFGQPC V4 ใช้ข้อมูล QUL ในเครื่อง · บุ๊กมาร์กและประวัติเก็บในอุปกรณ์นี้
           </span>
         </div>
       </section>
 
-      <footer className="page-footer">
-        <span>QURAN AI <i>·</i> เครื่องมือศึกษา ไม่ใช่คำวินิจฉัยทางศาสนา</span>
-        <span>คำอธิบายที่สร้างโดย AI จะแสดงแยกจากต้นฉบับและระบุแหล่งที่มา</span>
-      </footer>
-
-      {selectedAyah && (
-        <div
-          className="modal-backdrop"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setSelectedAyah(null);
-          }}
-        >
-          <section
-            ref={dialogRef}
-            className="tafsir-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="dialog-title"
-            aria-describedby="dialog-disclaimer"
-          >
+        <aside className="tafsir-panel" aria-label="แผงศึกษาตัฟซีร">
+          {selectedAyah ? (
+            <section
+              className="tafsir-panel-content"
+              aria-labelledby="dialog-title"
+            >
             <header className="dialog-header">
               <div>
                 <span className="section-kicker">AYAH STUDY</span>
                 <h2 id="dialog-title">ศึกษาอายะฮ์ {studySurahNumber}:{selectedAyah.numberInSurah}</h2>
               </div>
               <button
-                ref={closeButtonRef}
                 className="icon-button"
                 type="button"
                 onClick={() => setSelectedAyah(null)}
@@ -905,6 +1117,27 @@ export default function QuranReader() {
               <p>{selectedAyah.translation ?? "ยังไม่มีคำแปลสำหรับอายะฮ์นี้"}</p>
             </div>
 
+            <nav className="study-tabs" aria-label="เนื้อหาการศึกษา">
+              <button
+                type="button"
+                aria-pressed={studyTab === "overview"}
+                className={studyTab === "overview" ? "is-active" : ""}
+                onClick={() => setStudyTab("overview")}
+              >
+                ภาพรวม
+              </button>
+              <button
+                type="button"
+                aria-pressed={studyTab === "sources"}
+                className={studyTab === "sources" ? "is-active" : ""}
+                onClick={() => setStudyTab("sources")}
+              >
+                แหล่งอ้างอิง <span>{citationSources.length}</span>
+              </button>
+            </nav>
+
+            {studyTab === "overview" ? (
+              <>
             <label className="agent-picker">
               <span>เลือกหนังสือตัฟซีร</span>
               <select
@@ -1009,31 +1242,6 @@ export default function QuranReader() {
                     </span>
                   )}
                   <p>{message.content}</p>
-                  {message.sources?.map((source, sourceIndex) => (
-                    <article className="source-card" key={`${source.book}-${sourceIndex}`}>
-                      <div className="source-card-heading">
-                        <strong>{source.book}</strong>
-                        <span>{source.author} · {languageNames[source.language] ?? source.language}</span>
-                      </div>
-                      <div
-                        className="source-original"
-                        lang={source.language}
-                        dir={source.language === "ar" ? "rtl" : "auto"}
-                      >
-                        {source.original_text}
-                      </div>
-                      <div className="source-meta">
-                        <span>อายะฮ์ {source.ayah_range}</span>
-                        <span>สิทธิ์: {rightsStatusLabel(source.rights_status)}</span>
-                        <span>{source.evidence_status}</span>
-                        {source.resource_url && (
-                          <a href={source.resource_url} target="_blank" rel="noreferrer">
-                            ดูแหล่งข้อมูล ↗
-                          </a>
-                        )}
-                      </div>
-                    </article>
-                  ))}
                 </div>
               ))}
               {sending && <div className="inline-loading"><span className="spinner" /> กำลังอ่านแหล่งอ้างอิง…</div>}
@@ -1061,12 +1269,67 @@ export default function QuranReader() {
               </button>
             </form>
 
-            <p id="dialog-disclaimer" className="dialog-disclaimer">
+            <p id="panel-disclaimer" className="dialog-disclaimer">
               คำตอบสร้างโดย AI ไม่ใช่คำพูดของอุละมาอ์ และไม่ใช่ฟัตวา
             </p>
+              </>
+            ) : (
+              <section className="citation-list" aria-label="แหล่งอ้างอิงจากคำตอบ">
+                {citationSources.length === 0 ? (
+                  <div className="chat-empty">
+                    <span aria-hidden="true">⌑</span>
+                    <p>ยังไม่มีรายการอ้างอิง</p>
+                    <small>อ้างอิงจะแสดงเมื่อได้รับคำตอบจากแหล่งที่ได้รับอนุญาต</small>
+                  </div>
+                ) : (
+                  citationSources.map((source, index) => (
+                    <article className="source-card" key={`${source.book}-${index}`}>
+                      <div className="source-card-heading">
+                        <strong>{source.book}</strong>
+                        <span>{source.author} · {languageNames[source.language] ?? source.language}</span>
+                      </div>
+                      <div
+                        className="source-original"
+                        lang={source.language}
+                        dir={source.language === "ar" ? "rtl" : "auto"}
+                      >
+                        {source.original_text}
+                      </div>
+                      <div className="source-meta">
+                        <span>อายะฮ์ {source.ayah_range}</span>
+                        <span>สิทธิ์: {rightsStatusLabel(source.rights_status)}</span>
+                        <span>{source.evidence_status}</span>
+                        {source.resource_url && (
+                          <a href={source.resource_url} target="_blank" rel="noreferrer">
+                            ดูแหล่งข้อมูล ↗
+                          </a>
+                        )}
+                      </div>
+                    </article>
+                  ))
+                )}
+              </section>
+            )}
           </section>
-        </div>
-      )}
+          ) : (
+            <div className="tafsir-empty">
+              <span className="tafsir-empty-mark" aria-hidden="true">۞</span>
+              <span className="section-kicker">AYAH STUDY</span>
+              <h2>พื้นที่ศึกษาอายะฮ์</h2>
+              <p>เลือกข้อความอายะฮ์จากหน้ามุศหัฟ เพื่ออ่านคำแปลและศึกษาแหล่งตัฟซีรที่ตรวจสอบสิทธิ์แล้ว</p>
+              <div className="tafsir-empty-note">
+                <strong>หลักการอ้างอิง</strong>
+                <span>คำอธิบาย AI และต้นฉบับจากตำราจะแสดงแยกกัน พร้อมสถานะสิทธิ์และที่มา</span>
+              </div>
+            </div>
+          )}
+        </aside>
+      </div>
+
+      <footer className="page-footer">
+        <span>QURAN AI <i>·</i> เครื่องมือศึกษา ไม่ใช่คำวินิจฉัยทางศาสนา</span>
+        <span>คำอธิบายที่สร้างโดย AI จะแสดงแยกจากต้นฉบับและระบุแหล่งที่มา</span>
+      </footer>
     </main>
   );
 }

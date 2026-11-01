@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional
 from .agents import DEFAULT_DATABASES, REPOSITORY_ROOT
 from .rights import (
     ALLOWED_USES,
+    KNOWN_SOURCE_IDS,
+    OPTIONAL_SOURCE_IDS,
     REQUIRED_SOURCE_IDS,
     RUNTIME_USES,
     permission_allows,
@@ -23,7 +25,12 @@ DECISIONS = {"approved", "pending", "rejected"}
 
 
 def _empty_manifest() -> Dict[str, Any]:
-    dataset_files = [*DEFAULT_DATABASES.values(), "id-tafsir-as-saadi.db"]
+    dataset_files = [
+        *DEFAULT_DATABASES.values(),
+        "id-tafsir-as-saadi.db",
+        "surah-info-id.json",
+        "qpc-v4-tajweed-15-lines.db",
+    ]
     return {
         "schema_version": 1,
         "sources": {
@@ -63,7 +70,7 @@ def record_decision(
     license_name: Optional[str] = None,
     allowed_uses: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    if source_id not in REQUIRED_SOURCE_IDS:
+    if source_id not in KNOWN_SOURCE_IDS:
         raise ValueError(f"Unknown tafsir source: {source_id}")
     if status not in DECISIONS:
         raise ValueError(f"status must be one of {sorted(DECISIONS)}")
@@ -87,7 +94,7 @@ def record_decision(
 
     manifest = _read_manifest(path)
     sources = manifest["sources"]
-    for required_source in REQUIRED_SOURCE_IDS:
+    for required_source in KNOWN_SOURCE_IDS:
         sources.setdefault(required_source, _empty_manifest()["sources"][required_source])
 
     permission = sources.get(source_id)
@@ -137,10 +144,16 @@ def _status_report(path: Path, require_runtime: bool = False) -> int:
     manifest = _read_manifest(path)
     sources = manifest.get("sources", {})
     problems = validate_rights_manifest(manifest)
-    for source_id in sorted(REQUIRED_SOURCE_IDS):
+    for source_id in sorted(KNOWN_SOURCE_IDS):
         permission = sources.get(source_id, {})
         status = permission.get("status", "missing") if isinstance(permission, dict) else "invalid"
         print(f"{source_id}: {status}")
+        if source_id in OPTIONAL_SOURCE_IDS:
+            if isinstance(permission, dict) and permission_allows(permission, ["display"]):
+                print("  Runtime: eligible for display")
+            else:
+                print("  Runtime: blocked until display permission is reviewed")
+            continue
         if status != "approved":
             print("  Runtime: blocked until reviewed and approved")
         elif permission_allows(permission, RUNTIME_USES):
@@ -163,7 +176,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     subparsers.add_parser("status", help="Show approval state and missing requirements")
     subparsers.add_parser(
         "validate",
-        help="Fail unless all five corpora pass the runtime approval gate",
+        help="Fail unless all required tafsir corpora pass the runtime approval gate",
     )
     record_parser = subparsers.add_parser("record", help="Record a human source-specific decision")
     record_parser.add_argument("source_id", choices=sorted(REQUIRED_SOURCE_IDS))

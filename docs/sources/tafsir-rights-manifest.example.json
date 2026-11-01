@@ -50,6 +50,26 @@
       "evidence_refs": [],
       "decision_note": null,
       "review_history": []
+    },
+    "qul:surah-info-id": {
+      "status": "pending",
+      "license": null,
+      "allowed_uses": [],
+      "reviewed_by": null,
+      "reviewed_at": null,
+      "evidence_refs": [],
+      "decision_note": null,
+      "review_history": []
+    },
+    "qul:qpc-v4-tajweed-15-lines": {
+      "status": "pending",
+      "license": null,
+      "allowed_uses": [],
+      "reviewed_by": null,
+      "reviewed_at": null,
+      "evidence_refs": [],
+      "decision_note": null,
+      "review_history": []
     }
   }
 }

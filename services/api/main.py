@@ -5,6 +5,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from .routers.quran import router as quran_router
 from .routers.tafsir import router as tafsir_router
 
 app = FastAPI(
@@ -24,6 +25,7 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
+app.include_router(quran_router)
 app.include_router(tafsir_router)
 
 

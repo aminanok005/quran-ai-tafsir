@@ -79,3 +79,24 @@ def test_runtime_rights_require_timestamp_evidence_and_full_use_scope(tmp_path, 
     monkeypatch.setenv("TAFSIR_RIGHTS_MANIFEST", str(manifest_path))
 
     assert not source_allows(SOURCE_ID, ["display", "quotation", "ai_processing"])
+
+
+def test_optional_surah_background_source_can_be_display_only(tmp_path):
+    source_id = "qul:surah-info-id"
+    manifest_path = tmp_path / "rights.json"
+    approval = record_decision(
+        path=manifest_path,
+        source_id=source_id,
+        status="approved",
+        reviewer="reviewer-1",
+        decision_note="Approved reader display only",
+        evidence_refs=["docs/surah-info-permission.pdf"],
+        license_name="Example license",
+        allowed_uses=["display"],
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    permission = manifest["sources"][source_id]
+
+    assert approval["allowed_uses"] == ["display"]
+    assert permission_allows(permission, ["display"])
+    assert not permission_allows(permission, ["quotation", "ai_processing"])

@@ -16,6 +16,13 @@ The Quran reader fetches Uthmani text, the Thai King Fahad Quran Complex
 translation (`th.thai`), and Alafasy recitation (`ar.alafasy`) from
 AlQuran.cloud. The Thai translation and Arabic source are displayed separately,
 with edition attribution. Audio playback uses the provider's verse audio URLs.
+QPC V4 script and Indonesian surah background reading can be served from local
+QUL files configured with `QURAN_QPC_V4_PATH` and
+`QURAN_SURAH_INFO_ID_PATH`. Background reading is only displayed when the
+rights manifest explicitly allows `display` for `qul:surah-info-id`.
+The 604-page KFGQPC V4 15-line map is configured with
+`QURAN_QPC_15_LINE_LAYOUT_PATH`; the reader shows its verse-location map but
+keeps glyph rendering disabled while the source font is unpublished.
 Surah navigation, ayah study, local bookmarks, recent reading history, and
 resume-reading are available without an account; bookmark/history data stays
 in the browser's local storage.

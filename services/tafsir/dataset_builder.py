@@ -13,12 +13,24 @@ from .rights import (
     permission_allows,
     validate_rights_manifest_structure,
 )
-from .source_retrieval import DATASET_METADATA, _visible_text, connect_readonly
+from .source_retrieval import (
+    DATASET_METADATA,
+    _json_record,
+    _load_json_dataset,
+    _visible_text,
+    connect_readonly,
+)
 
 DEFAULT_SOURCE_FILES = tuple(dict.fromkeys(DEFAULT_DATABASES.values())) + (
     "id-tafsir-as-saadi.db",
 )
 DEFAULT_RAG_OUTPUT = REPOSITORY_ROOT / "data" / "processed" / "tafsir-rag.jsonl"
+
+
+def _resolve_source_path(source_dir: Path, database_filename: str) -> Path:
+    json_path = source_dir / Path(database_filename).with_suffix(".json").name
+    database_path = source_dir / database_filename
+    return json_path if json_path.is_file() else database_path
 
 
 def _chunks(text: str, max_chars: int) -> Iterator[str]:
@@ -48,11 +60,11 @@ def _chunks(text: str, max_chars: int) -> Iterator[str]:
         yield pending
 
 
-def iter_rag_records(database_path: Path, max_chars: int = 2000) -> Iterator[Dict[str, Any]]:
-    source_id = database_path.stem
+def iter_rag_records(source_path: Path, max_chars: int = 2000) -> Iterator[Dict[str, Any]]:
+    source_id = source_path.stem
     metadata = DATASET_METADATA.get(source_id)
     if metadata is None:
-        raise ValueError(f"Unrecognized tafsir dataset: {database_path.name}")
+        raise ValueError(f"Unrecognized tafsir dataset: {source_path.name}")
     rights_sources = load_rights_manifest().get("sources", {})
     permission = rights_sources.get(f"qul:{source_id}", {})
     if not isinstance(permission, dict) or not permission_allows(
@@ -62,7 +74,40 @@ def iter_rag_records(database_path: Path, max_chars: int = 2000) -> Iterator[Dic
             f"Tafsir source {source_id} is not approved for storage and indexing"
         )
     rights_status = permission["status"]
-    connection = connect_readonly(database_path.resolve())
+    if source_path.suffix.lower() == ".json":
+        stat = source_path.stat()
+        records = _load_json_dataset(
+            str(source_path.resolve()), stat.st_mtime_ns, stat.st_size
+        )
+        for ayah_key, value in records.items():
+            if isinstance(value, str) and value in records:
+                continue
+            passage = _json_record(records, ayah_key)
+            if passage is None:
+                continue
+            original_text = _visible_text(passage["raw_text"])
+            mapped_ayah_keys = passage["ayah_keys"]
+            group_key = passage["group_ayah_key"]
+            start, end = mapped_ayah_keys[0], mapped_ayah_keys[-1]
+            ayah_range = start if start == end else f"{start}-{end}"
+            yield from _iter_source_chunks(
+                source_id,
+                metadata,
+                permission,
+                rights_status,
+                ayah_key,
+                group_key,
+                mapped_ayah_keys,
+                ayah_range,
+                original_text,
+                "qul_json",
+                max_chars,
+            )
+        return
+
+    if source_path.suffix.lower() not in {".db", ".sqlite", ".sqlite3"}:
+        raise ValueError(f"Unsupported tafsir source format: {source_path.suffix}")
+    connection = connect_readonly(source_path.resolve())
     try:
         rows = connection.execute(
             """SELECT ayah_key, group_ayah_key, from_ayah, to_ayah, ayah_keys, text
@@ -70,51 +115,70 @@ def iter_rag_records(database_path: Path, max_chars: int = 2000) -> Iterator[Dic
         )
         for ayah_key, group_key, from_ayah, to_ayah, ayah_keys, raw_html in rows:
             original_text = _visible_text(raw_html or "")
-            if not original_text:
-                continue
-            start = from_ayah or ayah_key
-            end = to_ayah or start
-            ayah_range = start if start == end else f"{start}-{end}"
             mapped_ayah_keys = [
                 key.strip()
                 for key in (ayah_keys or "").split(",")
                 if key.strip()
             ] or [ayah_key]
-            for chunk_number, chunk in enumerate(_chunks(original_text, max_chars)):
-                yield {
-                    "schema_version": 1,
-                    "chunk_id": f"qul:{source_id}:{ayah_key}:{chunk_number}",
-                    "source_id": f"qul:{source_id}",
-                    "dataset_id": source_id,
-                    "author": metadata["author"],
-                    "author_ar": metadata["author_ar"],
-                    "book": metadata["title"],
-                    "book_ar": metadata["title_ar"],
-                    "language": metadata["language"],
-                    "ayah_key": ayah_key,
-                    "group_ayah_key": group_key or ayah_key,
-                    "ayah_keys": mapped_ayah_keys,
-                    "ayah_range": ayah_range,
-                    "chunk_index": chunk_number,
-                    "original_text": chunk,
-                    "resource_url": metadata["resource_url"],
-                    "rights_status": rights_status,
-                    "license": (
-                        permission.get("license")
-                        if isinstance(permission, dict)
-                        else None
-                    ),
-                    "allowed_uses": (
-                        permission.get("allowed_uses", [])
-                        if isinstance(permission, dict)
-                        and isinstance(permission.get("allowed_uses"), list)
-                        else []
-                    ),
-                    "verification_status": "not_reviewed",
-                    "source_backend": "qul_sqlite",
-                }
+            start = from_ayah or ayah_key
+            end = to_ayah or start
+            ayah_range = start if start == end else f"{start}-{end}"
+            yield from _iter_source_chunks(
+                source_id,
+                metadata,
+                permission,
+                rights_status,
+                ayah_key,
+                group_key or ayah_key,
+                mapped_ayah_keys,
+                ayah_range,
+                original_text,
+                "qul_sqlite",
+                max_chars,
+            )
     finally:
         connection.close()
+
+
+def _iter_source_chunks(
+    source_id: str,
+    metadata: Dict[str, Any],
+    permission: Dict[str, Any],
+    rights_status: str,
+    ayah_key: str,
+    group_key: str,
+    mapped_ayah_keys: List[str],
+    ayah_range: str,
+    original_text: str,
+    source_backend: str,
+    max_chars: int,
+) -> Iterator[Dict[str, Any]]:
+    if not original_text:
+        return
+    for chunk_number, chunk in enumerate(_chunks(original_text, max_chars)):
+        yield {
+            "schema_version": 1,
+            "chunk_id": f"qul:{source_id}:{ayah_key}:{chunk_number}",
+            "source_id": f"qul:{source_id}",
+            "dataset_id": source_id,
+            "author": metadata["author"],
+            "author_ar": metadata["author_ar"],
+            "book": metadata["title"],
+            "book_ar": metadata["title_ar"],
+            "language": metadata["language"],
+            "ayah_key": ayah_key,
+            "group_ayah_key": group_key,
+            "ayah_keys": mapped_ayah_keys,
+            "ayah_range": ayah_range,
+            "chunk_index": chunk_number,
+            "original_text": chunk,
+            "resource_url": metadata["resource_url"],
+            "rights_status": rights_status,
+            "license": permission.get("license"),
+            "allowed_uses": permission.get("allowed_uses", []),
+            "verification_status": "not_reviewed",
+            "source_backend": source_backend,
+        }
 
 
 def write_rag_corpus(
@@ -122,8 +186,13 @@ def write_rag_corpus(
     output_path: Path = DEFAULT_RAG_OUTPUT,
     max_chars: int = 2000,
 ) -> int:
+    source_paths = [
+        _resolve_source_path(source_dir, filename) for filename in DEFAULT_SOURCE_FILES
+    ]
     missing = [
-        filename for filename in DEFAULT_SOURCE_FILES if not (source_dir / filename).is_file()
+        filename
+        for filename, source_path in zip(DEFAULT_SOURCE_FILES, source_paths)
+        if not source_path.is_file()
     ]
     if missing:
         raise FileNotFoundError(
@@ -134,9 +203,8 @@ def write_rag_corpus(
     with tempfile.TemporaryDirectory(dir=output_path.parent) as temporary_dir:
         temporary_path = Path(temporary_dir) / output_path.name
         with temporary_path.open("w", encoding="utf-8") as output:
-            for filename in DEFAULT_SOURCE_FILES:
-                database_path = source_dir / filename
-                for record in iter_rag_records(database_path, max_chars):
+            for source_path in source_paths:
+                for record in iter_rag_records(source_path, max_chars):
                     output.write(json.dumps(record, ensure_ascii=False) + "\n")
                     record_count += 1
         os.replace(temporary_path, output_path)

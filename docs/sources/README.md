@@ -53,6 +53,24 @@ on that order alone.
 | Tafsir Ibn Kathir | `data-tafsir/ar-tafsir-ibn-kathir.db` | [Resource 22](https://qul.tarteel.ai/resources/tafsir/22) | Arabic; edition and rights review pending |
 | Tafsir al-Qurtubi | `data-tafsir/ar-tafseer-al-qurtubi.db` | Resource record not yet identified | Arabic; resolve resource record, edition, and rights |
 
+The Indonesian surah background resource is available locally as
+`data-tafsir/surah-info-id.json`. It includes a short summary and longer
+HTML-formatted context per surah. The Quran API converts that markup to plain
+text and serves one surah at a time through
+`GET /api/v1/quran/surahs/{surah_number}/info`; the reader labels it as
+Indonesian background reading, not tafsir or a scholarly verdict. Public display
+remains disabled until `qul:surah-info-id` has a reviewed permission record
+allowing `display`. It is not sent to an LLM.
+
+The `data-tafsir/qpc-v4-tajweed-15-lines.db` resource contains the KFGQPC V4
+Mushaf page/line map (604 pages, up to 15 lines per page). The API joins its
+word-ID ranges to `qpc-v4.json` and exposes verse references through
+`GET /api/v1/quran/mushaf/15-line/pages/{page_number}`. The reader only shows
+the layout map; QPC V4 glyph rendering remains disabled because the source font
+is unpublished and under proofreading. Public layout-map display requires
+`display` permission for `qul:qpc-v4-tajweed-15-lines`; no layout data is sent
+to an LLM.
+
 The files use a `tafsir` table keyed by `ayah_key`, with `group_ayah_key`,
 `from_ayah`, `to_ayah`, `ayah_keys`, and HTML `text`. Some records intentionally
 have empty text because a passage is attached to a grouped ayah; retrieval falls

@@ -14,6 +14,10 @@ DEFAULT_DATABASES = {
     "al-qurtubi": "ar-tafseer-al-qurtubi.db",
     "al-saadi": "tafsir-as-saadi.db",
 }
+DEFAULT_JSON_SOURCES = {
+    agent_id: Path(filename).with_suffix(".json").name
+    for agent_id, filename in DEFAULT_DATABASES.items()
+}
 AGENT_FOCUS = {
     "ibn-kathir": "Explain only what the retrieved Ibn Kathir passage supports.",
     "al-tabari": "Explain only what the retrieved al-Tabari passage supports.",
@@ -52,16 +56,29 @@ def get_agent_config(
     filename = DEFAULT_DATABASES[agent_id]
     if agent_id == "al-saadi" and source_language == "id":
         filename = "id-tafsir-as-saadi.db"
+        source_filename = "id-tafsir-as-saadi.json"
+    else:
+        source_filename = DEFAULT_JSON_SOURCES[agent_id]
     dataset_id = Path(filename).stem
     metadata = DATASET_METADATA[dataset_id]
     env_key = f"QURAN_TAFSIR_DB_{agent_id.upper().replace('-', '_')}"
+    source_env_key = f"QURAN_TAFSIR_SOURCE_{agent_id.upper().replace('-', '_')}_PATH"
     if agent_id == "al-saadi" and source_language == "id":
         env_key += "_ID"
+        source_env_key = "QURAN_TAFSIR_SOURCE_AL_SAADI_ID_PATH"
     configured_path = os.environ.get(f"{env_key}_PATH")
+    configured_source_path = os.environ.get(source_env_key)
     root = database_dir or Path(
         os.environ.get("QURAN_TAFSIR_DB_DIR", REPOSITORY_ROOT / "data-tafsir")
     )
-    path = Path(configured_path).expanduser() if configured_path else root / filename
+    if configured_source_path:
+        path = Path(configured_source_path).expanduser()
+    elif configured_path:
+        path = Path(configured_path).expanduser()
+    elif (root / source_filename).is_file():
+        path = root / source_filename
+    else:
+        path = root / filename
 
     return ScholarAgentConfig(
         agent_id=agent_id,

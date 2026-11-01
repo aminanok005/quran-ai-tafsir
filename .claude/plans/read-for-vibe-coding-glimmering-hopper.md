@@ -1,3 +1,10 @@
+# Historical implementation plan — superseded
+
+The repository has progressed beyond the initial assumptions in this document.
+For current status, rights gates, implementation phases, and agent instructions,
+use the canonical [Master Plan for Vibe Coding](./plan-master-vibe-coding.md).
+Keep this file only as historical context.
+
 # QURAN AI Implementation Plan
 
 ## Context

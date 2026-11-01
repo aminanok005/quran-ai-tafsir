@@ -6,6 +6,14 @@ The FastAPI bootstrap in `main.py` exposes an ayah-selected tafsir chat API:
   and Indonesian As-Saadi source variants.
 - `POST /api/v1/tafsir/chat` accepts `surah`, `ayah`, `scholar_id`, `message`,
   optional `history`, and optional As-Saadi `source_language`.
+- `GET /api/v1/quran/surahs/{number}/info` returns Indonesian background
+  reading from `surah-info-id.json`, after checking `display` permission for
+  `qul:surah-info-id`. It is not sent to an LLM.
+- `GET /api/v1/quran/mushaf/15-line/pages/{page_number}` returns page/line
+  positions and ayah references from the local KFGQPC V4 layout database.
+  Glyph text is not rendered because its V4 Tajweed font is unpublished and
+  being proofread; the endpoint requires `display` permission for
+  `qul:qpc-v4-tajweed-15-lines`.
 
 Run the API from the repository root with
 `uvicorn services.api.main:app --reload --env-file .env`. The Next.js app uses
@@ -25,6 +33,9 @@ review timestamp, evidence reference, decision note, and `display`,
 `LLM_API_KEY`/`OPENAI_API_KEY`) and optionally `TAFSIR_LLM_MODEL` and
 `TAFSIR_LLM_BASE_URL` to enable generated responses. The OpenAI-compatible
 adapter can also be pointed at another compatible provider, such as OpenRouter.
+The Quran endpoints also use `QURAN_QPC_V4_PATH` and
+`QURAN_SURAH_INFO_ID_PATH` to locate optional local QUL JSON files, plus
+`QURAN_QPC_15_LINE_LAYOUT_PATH` for the Mushaf page map.
 
 For the API schema and data governance rules, see
 [`docs/sources/README.md`](../../docs/sources/README.md).

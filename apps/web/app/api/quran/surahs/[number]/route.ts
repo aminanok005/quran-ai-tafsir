@@ -1,4 +1,4 @@
-import { forwardQuranRequest } from "@/lib/server-api";
+import { forwardBackendRequest } from "@/lib/server-api";
 
 export const dynamic = "force-dynamic";
 
@@ -12,9 +12,11 @@ export async function GET(
   }
 
   const edition = new URL(request.url).searchParams.get("edition") ?? "quran-uthmani";
-  if (!["quran-uthmani", "th.thai", "ar.alafasy"].includes(edition)) {
+  if (!["quran-uthmani", "th.thai", "ar.alafasy", "qpc-v4"].includes(edition)) {
     return Response.json({ detail: "Unsupported Quran edition" }, { status: 422 });
   }
 
-  return forwardQuranRequest(`/surah/${number}/${encodeURIComponent(edition)}`);
+  return forwardBackendRequest(
+    `/api/v1/quran/surahs/${number}?edition=${encodeURIComponent(edition)}`,
+  );
 }
