@@ -8,12 +8,21 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "jest"
+    "test": "jest",
+    "analyze": "ANALYZE=true next build",
+    "export": "next export"
   },
   "dependencies": {
     "next": "14.2.5",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "@headlessui/react": "^1.7.17",
+    "@heroicons/react": "^2.0.18",
+    "zustand": "^4.3.9",
+    "clsx": "^2.0.0",
+    "tailwind-merge": "^1.14.0",
+    "date-fns": "^2.30.0",
+    "framer-motion": "^10.0.0",
     "@types/node": "^20.0.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0"
@@ -28,6 +37,10 @@
     "postcss": "^8.0.0",
     "autoprefixer": "^10.0.0",
     "husky": "^8.0.0",
-    "lint-staged": "^13.0.0"
+    "lint-staged": "^13.0.0",
+    "prettier": "^3.0.0",
+    "prettier-plugin-tailwindcss": "^0.4.0",
+    "@next/bundle-analyzer": "^0.1.0",
+    "sass": "^1.69.0"
   }
 }

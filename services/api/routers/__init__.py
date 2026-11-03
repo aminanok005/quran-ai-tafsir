@@ -1,12 +1,13 @@
-# API routers for QURAN AI service
+from .quran import router as quran_router
+from .agents import router as agents_router
+from .citations import router as citations_router
+from .chat import router as chat_router
+from .sources import router as sources_router
 
-This package contains all FastAPI routers for the QURAN AI API service,
-including endpoints for Quran data, agents, citations, chat, and sources.
-"""
-
-__all__ = ["quran", "agents", "citations", "chat", "sources"]
-
-# Note: Individual router files are in separate files for better organization
-# and maintainability. This file just exports the routers for easy import.
-
-# See individual router files for endpoint definitions and implementations
+__all__ = [
+    "quran_router",
+    "agents_router", 
+    "citations_router",
+    "chat_router",
+    "sources_router"
+]

@@ -1,52 +1,74 @@
 """
-QURAN AI API Service Package
+QURAN AI API Package
 
-Core API service for the QURAN AI platform.
-
-This package contains:
-- FastAPI application with all necessary middleware
-- Quran Foundation API integration service
-- Agent orchestration service
-- Citation validation service
-- All API routers (quran, agents, citations, chat, sources)
-- Database models and configurations
+This package contains the complete backend infrastructure for the QURAN AI Super WebApp.
 """
 
-from .app import app
-from .config import settings
 from .models import *
-from .routers import quran, agents, citations, chat, sources
-from .services.quran_api_service import QuranAPIService, QuranAPIError
-from .middleware import RateLimitMiddleware, CacheMiddleware, SecurityMiddleware, ValidationMiddleware
+from .routers import quran_router, agents_router, citations_router, chat_router, sources_router
+from .services import QuranAPIService, AgentOrchestratorService, EvidenceValidationService
+from .agents import (
+    BaseTafsirAgent,
+    IbnKathirAgent,
+    AlTabariAgent,
+    AlQurtubiAgent,
+    IbnAshurAgent,
+    AlSaadiAgent,
+    AlZuhayliAgent,
+)
 
 __all__ = [
-    # FastAPI app
-    "app",
-
-    # Configuration
-    "settings",
-
     # Models
-    "BaseModel", "BaseEntity",
-    "SurahModel", "AyahModel", "TranslationModel", "WordTranslationModel",
-    "ScholarModel", "TafsirBookModel",
-    "SourcePermissionModel", "SourceReferenceModel", "CitationModel",
-    "AgentConfigModel", "RetrievedSourceModel", "AgentExecutionModel",
-    "UserModel", "BookmarkModel", "ReadingProgressModel",
-    "SearchRequestModel", "SearchResultModel", "SearchResponseModel",
-    "CreateTafsirRequest", "CreateTafsirResponse",
-    "ExecuteAgentRequest", "ExecuteAgentResponse",
-
-    # Enums
-    "SurahType", "Language", "EvidenceLevel", "AgentType", "Methodology",
-    "HadithGrade", "UserRole",
-
+    "SurahType",
+    "Language",
+    "EvidenceLevel",
+    "AgentType",
+    "Methodology",
+    "HadithGrade",
+    "UserRole",
+    "BaseModel",
+    "BaseEntity",
+    "SurahModel",
+    "AyahModel",
+    "TranslationModel",
+    "WordTranslationModel",
+    "ScholarModel",
+    "TafsirBookModel",
+    "SourcePermissionModel",
+    "SourceReferenceModel",
+    "CitationModel",
+    "AgentConfigModel",
+    "RetrievedSourceModel",
+    "AgentExecutionModel",
+    "UserModel",
+    "BookmarkModel",
+    "ReadingProgressModel",
+    "SearchRequestModel",
+    "SearchResultModel",
+    "SearchResponseModel",
+    "CreateTafsirRequest",
+    "CreateTafsirResponse",
+    "ExecuteAgentRequest",
+    "ExecuteAgentResponse",
+    
     # Routers
-    "quran", "agents", "citations", "chat", "sources",
-
+    "quran_router",
+    "agents_router",
+    "citations_router",
+    "chat_router",
+    "sources_router",
+    
     # Services
-    "QuranAPIService", "QuranAPIError",
-
-    # Middleware
-    "RateLimitMiddleware", "CacheMiddleware", "SecurityMiddleware", "ValidationMiddleware",
+    "QuranAPIService",
+    "AgentOrchestratorService",
+    "CitationValidationService",
+    
+    # Agents
+    "BaseTafsirAgent",
+    "IbnKathirAgent",
+    "AlTabariAgent",
+    "AlQurtubiAgent",
+    "IbnAshurAgent",
+    "AlSaadiAgent",
+    "AlZuhayliAgent",
 ]

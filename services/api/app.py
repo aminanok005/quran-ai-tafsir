@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 import logging
+from datetime import datetime
 
 from .models import *
 from .routers import quran, agents, citations, chat, sources
@@ -101,7 +102,7 @@ async def readiness() -> Dict[str, Any]:
         return {
             "status": "ready",
             "services": services_status,
-            "timestamp": str(datetime.now())
+            "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         logger.error(f"Readiness check failed: {e}")
@@ -110,7 +111,7 @@ async def readiness() -> Dict[str, Any]:
             content={
                 "status": "not_ready",
                 "error": str(e),
-                "timestamp": str(datetime.now())
+                "timestamp": datetime.now().isoformat()
             }
         )
 
@@ -123,7 +124,7 @@ async def http_exception_handler(request, exc):
         content={
             "error": exc.detail,
             "status_code": exc.status_code,
-            "timestamp": str(datetime.now())
+            "timestamp": datetime.now().isoformat()
         }
     )
 
@@ -136,6 +137,6 @@ async def unhandled_exception_handler(request, exc):
         content={
             "error": "Internal server error",
             "detail": str(exc) if settings.debug else "An unexpected error occurred",
-            "timestamp": str(datetime.now())
+            "timestamp": datetime.now().isoformat()
         }
     )
