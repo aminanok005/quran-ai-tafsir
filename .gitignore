@@ -33,7 +33,7 @@ secrets/
 data/raw/
 data/processed/
 data/indexes/
-data-tafsir/
+
 *.db
 uploads/
 storage/
