@@ -1,3 +1,102 @@
+# Cline Report
+
+## Current task: development-only source mode
+
+### Files changed
+- `services/ingestion/policy.py`: separated `permission_status` and `verification_status`; added explicit `development_only`, production/development modes, evidence gate, production eligibility, and provenance metadata helper.
+- `services/ingestion/test_policy.py`: added lifecycle, metadata, no-license-inference, development-only, and production eligibility tests.
+- `database/**`: not changed. Canonical migration work is blocked by ownership boundary.
+- `scripts/load_tafsir_data.py` and `scripts/seed_quran_data.py`: not changed. Both are outside Cline ownership.
+
+### Blockers
+- User requires canonical Alembic changes under `services/api/migrations/`, but Cline owns only `database/**`, `services/ingestion/**`, and this report.
+- User requires loader changes under `scripts/`, outside Cline ownership.
+- Existing `services/api/migrations/versions/0001_initial_setup.py` creates indexes on `tafsir_passages` before creating that table. Fresh migration validation cannot pass without owner approval.
+- Existing `services/api/migrations/versions/0001_initial_setup.py` contains malformed enum SQL quoting around `methodology`.
+- Existing `database/migrations/003_source_permissions.sql` is legacy/reference material, not canonical, and uses one `verified` boolean plus `rights_status`; it must not be treated as the requested canonical model.
+
+### Validation
+- `cd services/ingestion && python3 -m unittest -v`: PASS, 6 tests.
+- `python3 -m py_compile services/ingestion/policy.py services/ingestion/test_policy.py scripts/seed_quran_data.py scripts/load_tafsir_data.py`: FAIL. Existing syntax error in `/home/nisreen/Videos/yt-project/quran-intelligent-tafsir/scripts/seed_quran_data.py:156`; script is outside ownership and was not changed.
+- No PostgreSQL connection, migration, production DB, real ingestion, install, commit, push, or destructive Git operation performed.
+- Existing modified/untracked files preserved.
+
+### Remaining work requiring Coordinator reassignment
+1. Reassign canonical Alembic migration files to Cline or grant explicit ownership approval.
+2. Reassign `scripts/load_tafsir_data.py` and `scripts/seed_quran_data.py` to Cline or grant explicit ownership approval.
+3. After reassignment, fix migration graph/order and seeder syntax/schema compatibility, then run disposable PostgreSQL validation only.
+
+## Previous report
+
+
+## Scope
+- User approved Act mode and requested next implementation step.
+
+## Source rights development guard
+- Added `database/migrations/003_source_permissions.sql` with source provenance, rights status, license, URL, verification, and reviewer fields.
+- Default status is `pending`; approval requires `verified = TRUE` and a non-null license.
+- Added pure policy gate under `services/ingestion/policy.py`; pending, unverified, missing-license, or missing-URL sources are blocked.
+- Added unit tests under `services/ingestion/test_policy.py`.
+- No real source data ingested. No license claim made for existing datasets. No database migration executed.
+- Frontend files changed under explicit user approval: `apps/web/app/page.tsx`.
+- Normal Cline ownership remains `database/**`, `services/ingestion/**`, and this report.
+
+## Implementation
+- Replaced static English reader mock with Thai-first landing workspace.
+- Added query-driven reader state at `/?view=reader&surah=1&ayah=1`.
+- Added responsive three-column reader layout.
+- Added API-backed surah, ayah, Arabic text, and Thai translation loading.
+- Added Arabic RTL rendering and Arabic font usage.
+- Added ayah selection and URL state.
+- Added opt-in Tafsir agent selection and explanation loading through existing API client.
+- Added loading, empty, unavailable, and error states.
+- Rendered evidence status and citations only when returned by API.
+- Removed hardcoded Quran passage, translation, tafsir claim, and fabricated citation from page.
+
+## Contract audit
+- Existing frontend client uses `/api/v1/tafsir/agents/explain?surah=&ayah=&agent_type=&language=th`.
+- Existing Quran routes expose `/surahs`, `/surahs/{surah_number}/ayahs`, `/ayahs/{surah_number}/{ayah_number}`, and translations.
+- No shared API contract changed.
+- Client response normalization handles list, `data`, `surahs`, `ayahs`, and `translations` wrappers.
+
+## Security and citation audit
+- No secrets, credentials, migrations, installs, commits, pushes, or destructive Git operations performed.
+- No source citation invented in UI.
+- API client still logs generic Tafsir request failure through pre-existing behavior; no secret values exposed by changed code.
+- Existing `next.config.js` emits warnings for unsupported `serverComponents`, `localesSeparator`, and `asyncHeaders`; not changed.
+
+## Validation
+- `cd apps/web && npm run build`: PASS. Next build completed; existing next.config warnings remain.
+- Direct source TypeScript check with `npx tsc --noEmit ... app/page.tsx src/lib/api/client.ts src/components/ui/fonts.tsx`: PASS.
+- `git diff --check -- apps/web`: PASS.
+- `cd apps/web && npm run typecheck`: PASS after successful Next build generated `.next/types`.
+- `npm run lint`: not run; repository has no ESLint config and command is interactive. No generated config retained.
+
+## Remaining risks
+- Backend API availability and exact response fields need integration test with running API.
+- Existing uncommitted files and unrelated frontend changes predate this work; preserved.
+- `apps/web/app/layout.tsx`, `apps/web/app.json`, and untracked frontend files were already changed before this task.
+
+## Landing UI refinement
+- Expanded landing from hero-only view into full responsive page after review of `Landing page@2x.png` dimensions (`2880×9350`) and `Design.md` visual tokens.
+- Added sticky navigation, workspace preview, feature cards, study flow, evidence-first CTA, and footer.
+- Applied approved deep emerald, imperial gold, light-surface palette.
+- Removed decorative Arabic phrase from landing to avoid presenting non-sourced Arabic text as Quran content.
+- Reused existing reader route and behavior; CTA actions navigate to `/?view=reader`.
+- Validation: `cd apps/web && npm run build` PASS. Direct source TypeScript check PASS. `npm run typecheck` still intermittently fails only because existing `tsconfig.json` includes missing `.next/types/app/*.ts` files after command cleanup; Next build itself completes type validation.
+
+## Reader UI completion pass
+- Matched reader composition to `Design.md`: 260px navigation, flexible center canvas, 420px Tafsir/tools panel.
+- Added reader navigation hierarchy: Quran index, study path, saved-items visual states; unsupported items remain non-functional.
+- Added Tafsir / Quiz / Cards tab treatment; Quiz and Cards remain disabled because no verified frontend/backend feature contract exists.
+- Added disabled audio/bookmark actions with honest Thai unavailable state; no fake audio source or persistence added.
+- Added ayah action bar, stronger emerald/gold token usage, evidence-oriented right panel, and responsive surface hierarchy.
+- Preserved API-only Arabic, Thai translation, Tafsir, evidence status, citations, loading, error, and empty behavior.
+- Validation: `cd apps/web && npm run build && npm run typecheck` PASS. Existing `next.config.js` warnings remain for unsupported `serverComponents`, `localesSeparator`, and `asyncHeaders`. `git diff --check` PASS.
+
+## Unapproved actions
+- None. Frontend edit was made after explicit user approval in Act mode.
+
 # Agent Execution Report - CLINE
 
 ## 1. Agent and task

@@ -1,0 +1,7 @@
+{
+  "actModeApiProvider": "openai",
+  "planModeApiProvider": "openai",
+  "openAiBaseUrl": "http://127.0.0.1:20128",
+  "openAiModelId": "9router-combos",
+  "planModeOpenAiModelId": "9router-combos"
+}

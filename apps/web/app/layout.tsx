@@ -1,8 +1,5 @@
-"use client";
-
-import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
-import { Metadata } from 'next';
+import type { Metadata } from 'next';
 
 // Import the font with custom subsets
 const inter = Inter({

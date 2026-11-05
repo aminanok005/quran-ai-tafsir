@@ -53,7 +53,7 @@ python_files = ["test_*.py"]
 addopts = "-v --tb=short"
 
 [tool.alembic]
-script_location = "database/migrations"
+script_location = "services/api/migrations"
 repr_table_names = false
 
 [tool.black]

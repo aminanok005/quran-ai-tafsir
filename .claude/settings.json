@@ -1,0 +1,11 @@
+{
+  "hasCompletedOnboarding": true,
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:20128/v1",
+    "ANTHROPIC_AUTH_TOKEN": "sk-abff1800592bb04c-59sg30-c928588c",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "9router-combos",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "9router-combos",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "9router-combos[1m]",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "9router-combos"
+  }
+}
