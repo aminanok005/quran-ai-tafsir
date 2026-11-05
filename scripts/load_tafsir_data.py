@@ -7,19 +7,28 @@ Loads classical tafsir sources from JSON files into PostgreSQL database
 import json
 import os
 import sys
-import asyncio
+import argparse
+import html
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any
 import logging
+import re
+import uuid
 
-# Add services/api to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'services', 'api'))
+REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPOSITORY_ROOT / "services" / "ingestion"))
+from policy import (
+    DEVELOPMENT,
+    PENDING,
+    PRODUCTION,
+    UNVERIFIED,
+    SourcePermission,
+    evaluate_source,
+)
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.dialects.postgresql import UUID
-import uuid
 
 # Configure logging
 logging.basicConfig(
@@ -34,6 +43,9 @@ DATABASE_URL = os.environ.get(
     "postgresql+psycopg://quran_ai:CHANGE_ME@localhost:5432/quran_ai"
 )
 
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise RuntimeError("Set DATABASE_URL before loading or verifying data")
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
@@ -49,8 +61,13 @@ TAFSIR_DATA_FILES = {
             "birth_year": 1301,
             "death_year": 1373,
             "biography": "Renowned Islamic scholar, historian, and mufassir. Author of Tafsir al-Qur'an al-Azim.",
-            "license": "Open access - King Fahd Complex",
-            "source_url": "https://shamela.ws/book/16559"
+            "source_url": "https://shamela.ws/book/16559",
+        },
+        "permission": {
+            "permission_status": PENDING,
+            "verification_status": UNVERIFIED,
+            "license": None,
+            "verification_evidence": None,
         },
         "book": {
             "book_id": "tafsir_ibn_kathir",
@@ -60,8 +77,6 @@ TAFSIR_DATA_FILES = {
             "publisher": "Dar Taybah",
             "volume": 8,
             "language": "ar",
-            "verified": True,
-            "license": "Open access - King Fahd Complex",
             "source_url": "https://shamela.ws/book/16559"
         }
     },
@@ -75,8 +90,13 @@ TAFSIR_DATA_FILES = {
             "birth_year": 839,
             "death_year": 923,
             "biography": "Renowned Islamic historian and mufassir. Author of Jami' al-Bayan.",
-            "license": "Open access - Maktabah Shamela",
-            "source_url": "https://shamela.ws/book/16558"
+            "source_url": "https://shamela.ws/book/16558",
+        },
+        "permission": {
+            "permission_status": PENDING,
+            "verification_status": UNVERIFIED,
+            "license": None,
+            "verification_evidence": None,
         },
         "book": {
             "book_id": "jami_al_bayan",
@@ -86,8 +106,6 @@ TAFSIR_DATA_FILES = {
             "publisher": "Dar al-Kutub al-Ilmiyah",
             "volume": 30,
             "language": "ar",
-            "verified": True,
-            "license": "Open access - Maktabah Shamela",
             "source_url": "https://shamela.ws/book/16558"
         }
     },
@@ -101,8 +119,13 @@ TAFSIR_DATA_FILES = {
             "birth_year": 1214,
             "death_year": 1273,
             "biography": "Renowned Maliki jurist and mufassir. Author of Al-Jami' li-Ahkam al-Qur'an.",
-            "license": "Open access - King Fahd Complex",
-            "source_url": "https://shamela.ws/book/16560"
+            "source_url": "https://shamela.ws/book/16560",
+        },
+        "permission": {
+            "permission_status": PENDING,
+            "verification_status": UNVERIFIED,
+            "license": None,
+            "verification_evidence": None,
         },
         "book": {
             "book_id": "jami_ahkam",
@@ -112,8 +135,6 @@ TAFSIR_DATA_FILES = {
             "publisher": "Dar al-Kutub al-Ilmiyah",
             "volume": 20,
             "language": "ar",
-            "verified": True,
-            "license": "Open access - King Fahd Complex",
             "source_url": "https://shamela.ws/book/16560"
         }
     },
@@ -127,8 +148,13 @@ TAFSIR_DATA_FILES = {
             "birth_year": 1889,
             "death_year": 1956,
             "biography": "Renowned scholar known for clear and accessible tafsir. Author of Taysir al-Karim al-Rahman.",
-            "license": "Open access - King Fahd Complex",
-            "source_url": "https://shamela.ws/book/16561"
+            "source_url": "https://shamela.ws/book/16561",
+        },
+        "permission": {
+            "permission_status": PENDING,
+            "verification_status": UNVERIFIED,
+            "license": None,
+            "verification_evidence": None,
         },
         "book": {
             "book_id": "taysir_karim",
@@ -138,8 +164,6 @@ TAFSIR_DATA_FILES = {
             "publisher": "Dar al-Kutub al-Ilmiyah",
             "volume": 8,
             "language": "ar",
-            "verified": True,
-            "license": "Open access - King Fahd Complex",
             "source_url": "https://shamela.ws/book/16561"
         }
     }
@@ -147,27 +171,20 @@ TAFSIR_DATA_FILES = {
 
 def load_json_file(filepath: str) -> Dict[str, Any]:
     """Load JSON file with proper encoding."""
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        logger.info(f"Loaded {filepath}: {len(data)} surahs")
-        return data
-    except Exception as e:
-        logger.error(f"Failed to load {filepath}: {e}")
-        return {}
+    with open(filepath, "r", encoding="utf-8") as file:
+        data = json.load(file)
+    if not isinstance(data, dict):
+        raise ValueError(f"Expected a JSON object in {filepath}")
+    logger.info("Loaded %s: %s entries", filepath, len(data))
+    return data
 
 def extract_text_from_html(html_text: str) -> str:
     """Extract plain text from HTML formatted tafsir text."""
     if not html_text:
         return ""
 
-    # Simple HTML tag removal
-    import re
-    text = re.sub(r'<[^>]+>', '', html_text)
-    text = text.replace('&nbsp;', ' ').replace('&', '&')
-    text = text.replace('<', '<').replace('>', '>')
-    text = ' '.join(text.split())  # Normalize whitespace
-    return text.strip()
+    plain_text = re.sub(r"<[^>]+>", "", html_text)
+    return " ".join(html.unescape(plain_text).split())
 
 def parse_surah_ayah_key(key: str) -> tuple:
     """Parse surah:ayah key from JSON structure."""
@@ -179,8 +196,28 @@ def parse_surah_ayah_key(key: str) -> tuple:
         pass
     return None, None
 
-async def init_database():
+def init_database(mode: str = PRODUCTION):
     """Initialize database with classical tafsir sources."""
+    permissions = {}
+    for agent_key, config in TAFSIR_DATA_FILES.items():
+        book = config["book"]
+        details = config["permission"]
+        permission = SourcePermission(
+            source_id=book["book_id"],
+            work_title=book["title"],
+            permission_status=details["permission_status"],
+            verification_status=details["verification_status"],
+            license=details["license"],
+            source_url=book["source_url"],
+            verification_evidence=details["verification_evidence"],
+        )
+        decision = evaluate_source(permission, mode=mode)
+        if not decision.allowed:
+            raise PermissionError(
+                f"Source {book['book_id']} is blocked: {decision.reason}"
+            )
+        permissions[agent_key] = permission
+
     logger.info("🚀 Starting QURAN AI Database Initialization")
 
     db = SessionLocal()
@@ -190,11 +227,42 @@ async def init_database():
         db.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         db.commit()
 
+        for permission in permissions.values():
+            db.execute(
+                text("""
+                    INSERT INTO source_permissions (
+                        source_id, source_url, license, permission_status,
+                        verification_status, verification_evidence, notes
+                    ) VALUES (
+                        :source_id, :source_url, :license, :permission_status,
+                        :verification_status, :verification_evidence, :notes
+                    )
+                    ON CONFLICT (source_id) DO UPDATE SET
+                        source_url = EXCLUDED.source_url,
+                        license = EXCLUDED.license,
+                        permission_status = EXCLUDED.permission_status,
+                        verification_status = EXCLUDED.verification_status,
+                        verification_evidence = EXCLUDED.verification_evidence,
+                        notes = EXCLUDED.notes,
+                        updated_at = CURRENT_TIMESTAMP
+                """),
+                {
+                    "source_id": permission.source_id,
+                    "source_url": permission.source_url,
+                    "license": permission.license,
+                    "permission_status": permission.permission_status,
+                    "verification_status": permission.verification_status,
+                    "verification_evidence": permission.verification_evidence,
+                    "notes": permission.notes,
+                },
+            )
+        db.commit()
+
         # Step 2: Create/verify scholars
         logger.info("Creating scholar records...")
         scholar_ids = {}
         for agent_key, config in TAFSIR_DATA_FILES.items():
-            scholar_data = config["scholar"]
+            scholar_data = {**config["scholar"], "license": None}
             result = db.execute(text("""
                 INSERT INTO scholars (scholar_id, name, name_ar, school, birth_year, death_year,
                                     biography, license, source_url)
@@ -221,11 +289,16 @@ async def init_database():
         for agent_key, config in TAFSIR_DATA_FILES.items():
             book_data = config["book"].copy()
             book_data["scholar_id"] = scholar_ids[agent_key]
+            book_data.update(config["permission"])
             result = db.execute(text("""
-                INSERT INTO tafsir_books (book_id, scholar_id, title, title_ar, edition,
-                                        publisher, volume, language, verified, license, source_url)
-                VALUES (:book_id, :scholar_id, :title, :title_ar, :edition,
-                        :publisher, :volume, :language, :verified, :license, :source_url)
+                INSERT INTO tafsir_books (
+                    book_id, scholar_id, title, title_ar, edition, publisher, volume,
+                    language, permission_status, verification_status,
+                    verification_evidence, license, source_url
+                )
+                    VALUES (:book_id, :scholar_id, :title, :title_ar, :edition,
+                            :publisher, :volume, :language, :permission_status,
+                            :verification_status, :verification_evidence, :license, :source_url)
                 ON CONFLICT (book_id) DO UPDATE SET
                     scholar_id = EXCLUDED.scholar_id,
                     title = EXCLUDED.title,
@@ -234,7 +307,9 @@ async def init_database():
                     publisher = EXCLUDED.publisher,
                     volume = EXCLUDED.volume,
                     language = EXCLUDED.language,
-                    verified = EXCLUDED.verified,
+                    permission_status = EXCLUDED.permission_status,
+                    verification_status = EXCLUDED.verification_status,
+                    verification_evidence = EXCLUDED.verification_evidence,
                     license = EXCLUDED.license,
                     source_url = EXCLUDED.source_url
                 RETURNING id
@@ -254,8 +329,7 @@ async def init_database():
             book_id = book_ids[agent_key]
 
             if not os.path.exists(filepath):
-                logger.warning(f"File not found: {filepath}")
-                continue
+                raise FileNotFoundError(f"Required tafsir source file not found: {filepath}")
 
             logger.info(f"Loading {config['book']['title']} from {filepath}...")
             data = load_json_file(filepath)
@@ -275,7 +349,12 @@ async def init_database():
                     continue
 
                 passage = {
-                    "id": str(uuid.uuid4()),
+                    "id": str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            f"{book_id}:{surah_num}:{ayah_num}",
+                        )
+                    ),
                     "book_id": str(book_id),
                     "surah_number": surah_num,
                     "ayah_start": ayah_num,
@@ -283,14 +362,14 @@ async def init_database():
                     "arabic_text": clean_text,
                     "thai_translation": None,  # Will be filled from translation API
                     "english_translation": None,
-                    "volume": 1,
-                    "page": 1,
+                    "volume": None,
+                    "page": None,
                     "edition": config["book"]["edition"],
                     "source_url": config["book"]["source_url"],
                     "hadith_references": [],
-                    "evidence_grade": "sahih",
+                    "evidence_grade": None,
                     "embedding": None,  # Will be populated later by embedding service
-                    "verification_status": "verified",
+                    "verification_status": "unverified",
                     "created_at": datetime.now(),
                     "updated_at": datetime.now()
                 }
@@ -298,14 +377,14 @@ async def init_database():
 
                 # Batch insert every 100 passages
                 if len(passages_to_insert) >= 100:
-                    inserted = await batch_insert_passages(db, passages_to_insert)
+                    inserted = batch_insert_passages(db, passages_to_insert)
                     total_passages += inserted
                     passages_to_insert = []
                     logger.info(f"  Inserted {total_passages} passages so far...")
 
             # Insert remaining
             if passages_to_insert:
-                inserted = await batch_insert_passages(db, passages_to_insert)
+                inserted = batch_insert_passages(db, passages_to_insert)
                 total_passages += inserted
 
             logger.info(f"  ✅ {config['book']['title']}: {total_passages} total passages loaded")
@@ -341,8 +420,9 @@ async def init_database():
         raise
     finally:
         db.close()
+        engine.dispose()
 
-async def batch_insert_passages(db, passages: List[Dict]):
+def batch_insert_passages(db, passages: List[Dict]):
     """Batch insert tafsir passages."""
     if not passages:
         return 0
@@ -364,22 +444,10 @@ async def batch_insert_passages(db, passages: List[Dict]):
         ON CONFLICT DO NOTHING
     """)
 
-    try:
-        db.execute(insert_sql, passages)
-        return len(passages)
-    except Exception as e:
-        logger.error(f"Batch insert failed: {e}")
-        # Try individual inserts
-        inserted = 0
-        for passage in passages:
-            try:
-                db.execute(insert_sql, passage)
-                inserted += 1
-            except Exception as e2:
-                logger.debug(f"Failed to insert passage: {e2}")
-        return inserted
+    result = db.execute(insert_sql, passages)
+    return max(result.rowcount, 0)
 
-async def verify_database():
+def verify_database():
     """Verify database initialization."""
     logger.info("🔍 Verifying database initialization...")
 
@@ -419,19 +487,23 @@ async def verify_database():
 
     finally:
         db.close()
+        engine.dispose()
 
 if __name__ == "__main__":
-    import argparse
-
     parser = argparse.ArgumentParser(description="Initialize QURAN AI database")
     parser.add_argument("--verify", action="store_true", help="Verify database after initialization")
+    parser.add_argument(
+        "--mode",
+        choices=(PRODUCTION, DEVELOPMENT),
+        default=PRODUCTION,
+        help="Apply production or explicitly development-only source permissions",
+    )
     args = parser.parse_args()
 
-    # Run initialization
-    asyncio.run(init_database())
+    init_database(mode=args.mode)
 
     # Verify if requested
     if args.verify:
-        asyncio.run(verify_database())
+        verify_database()
 
     logger.info("✅ Database initialization script completed!")

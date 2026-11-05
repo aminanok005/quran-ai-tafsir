@@ -5,7 +5,11 @@ This package contains the complete backend infrastructure for the QURAN AI Super
 """
 
 from .models import *
-from .routers import quran_router, agents_router, citations_router, chat_router, sources_router
+from .routers import (
+    quran_router,
+    agents_router,
+    tafsir_router,
+)
 from .services import QuranAPIService, AgentOrchestratorService, EvidenceValidationService
 from .agents import (
     BaseTafsirAgent,
@@ -54,14 +58,12 @@ __all__ = [
     # Routers
     "quran_router",
     "agents_router",
-    "citations_router",
-    "chat_router",
-    "sources_router",
+    "tafsir_router",
     
     # Services
     "QuranAPIService",
     "AgentOrchestratorService",
-    "CitationValidationService",
+    "EvidenceValidationService",
     
     # Agents
     "BaseTafsirAgent",

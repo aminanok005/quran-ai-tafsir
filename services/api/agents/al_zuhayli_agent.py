@@ -51,7 +51,7 @@ class AlZuhayliAgent(BaseTafsirAgent):
                 "to contemporary challenges, addressing issues of religious tolerance, peaceful coexistence, and the role "
                 "of divine guidance in modern societies. Al-Zuhayli emphasizes the universal aspects of this revelation "
                 "and its relevance to current global challenges, connecting classical interpretation with contemporary applications."
-            ],
+            ),
             "key_points": [
                 "Contemporary comparative fiqh",
                 "Modern societal applications",

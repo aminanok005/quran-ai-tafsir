@@ -1,14 +1,5 @@
-"""QURAN AI API service bootstrap."""
+"""Canonical ASGI entry point for the QURAN AI API."""
 
-from fastapi import FastAPI
+from .app import app
 
-app = FastAPI(
-    title="QURAN AI API",
-    version="0.1.0",
-    description="Thai-first Quran study and evidence-based Tafsir API.",
-)
-
-
-@app.get("/health", tags=["health"])
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+__all__ = ["app"]

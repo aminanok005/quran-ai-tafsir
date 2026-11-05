@@ -27,7 +27,21 @@ export class ApiClient {
     });
 
     if (!response.ok) {
-      throw new Error(`API Error: ${response.status} ${response.statusText}`);
+      const errorBody: unknown = await response.json();
+      const detail = typeof errorBody === 'object' && errorBody !== null
+        ? 'detail' in errorBody && typeof errorBody.detail === 'string'
+          ? errorBody.detail
+          : 'error' in errorBody && typeof errorBody.error === 'string'
+            ? errorBody.error
+            : 'message' in errorBody && typeof errorBody.message === 'string'
+              ? errorBody.message
+              : undefined
+        : undefined;
+      throw new Error(
+        typeof detail === 'string'
+          ? detail
+          : `API Error: ${response.status} ${response.statusText}`
+      );
     }
 
     return response.json();
@@ -41,6 +55,27 @@ export class ApiClient {
     return this.request<T>(endpoint, {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+  }
+
+  async getTafsirPassage(surah: number, ayah: number, agentType: string) {
+    return this.request<unknown>(
+      `/tafsir/passages/${surah}/${ayah}?agent_type=${encodeURIComponent(agentType)}`
+    );
+  }
+
+  async translateTafsirPassage(passageId: string) {
+    return this.request<unknown>(`/tafsir/passages/${encodeURIComponent(passageId)}/translate`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  }
+
+  async translateDevelopmentTafsirPassage(surah: number, ayah: number, agentType: string) {
+    const query = `agent_type=${encodeURIComponent(agentType)}`;
+    return this.request<unknown>(`/tafsir/passages/dev/${surah}/${ayah}/translate?${query}`, {
+      method: 'POST',
+      body: JSON.stringify({}),
     });
   }
 

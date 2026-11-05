@@ -42,10 +42,11 @@ class BaseTafsirAgent(ABC):
         """Generate Tafsir explanation for a specific ayah."""
         pass
 
-    @abstractmethod
     async def compare_views(self, surah: int, ayah: int, other_agents: List[str]) -> Dict[str, Any]:
-        """Compare scholarly views with other agents."""
-        pass
+        """Compare scholarly views when a concrete agent implements comparison."""
+        raise NotImplementedError(
+            f"{self.agent_type} does not implement direct view comparison"
+        )
 
     async def retrieve_sources(self, surah: int, ayah: int, session=None) -> List[Dict[str, Any]]:
         """Retrieve relevant Tafsir sources from database."""

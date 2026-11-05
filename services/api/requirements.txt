@@ -2,7 +2,9 @@ fastapi==0.143.2
 uvicorn[standard]==0.54.0
 pydantic==2.14.1
 pydantic_core==2.50.1
+pydantic-settings==2.10.1
 sqlalchemy==2.0.0
+psycopg[binary]==3.2.9
 # alembic==1.13.1  # Optional, can use command line
 redis==8.1.0
 httpx==0.28.1

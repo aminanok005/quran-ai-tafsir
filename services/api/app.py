@@ -21,8 +21,8 @@ import logging
 from datetime import datetime
 
 from .models import *
-from .routers import quran, agents, citations, chat, sources
-from .services import QuranAPIService, AgentOrchestratorService, CitationValidationService
+from .routers import quran, agents, tafsir
+from .services import QuranAPIService, AgentOrchestratorService, EvidenceValidationService
 from .config import settings
 
 # Configure logging
@@ -42,7 +42,7 @@ async def lifespan(app: FastAPI):
     try:
         quran_api_service = QuranAPIService()
         agent_orchestrator = AgentOrchestratorService()
-        citation_service = CitationValidationService()
+        citation_service = EvidenceValidationService()
 
         # Test database connections
         # Test external API connectivity
@@ -76,11 +76,9 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(quran.router)
+app.include_router(quran.router, prefix="/api/v1")
 app.include_router(agents.router)
-app.include_router(citations.router)
-app.include_router(chat.router)
-app.include_router(sources.router)
+app.include_router(tafsir.router, prefix="/api/v1")
 
 @app.get("/health", tags=["health"])
 async def health() -> Dict[str, str]:

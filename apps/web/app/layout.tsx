@@ -1,5 +1,6 @@
 import { Inter } from 'next/font/google';
 import type { Metadata } from 'next';
+import './globals.css';
 
 // Import the font with custom subsets
 const inter = Inter({

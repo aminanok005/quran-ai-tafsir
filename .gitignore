@@ -37,7 +37,7 @@ data/indexes/
 *.db
 uploads/
 storage/
-data-tafsir/
+
 
 # OS / editor
 .DS_Store

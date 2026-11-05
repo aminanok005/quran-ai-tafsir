@@ -5,80 +5,233 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { apiClient } from '../src/lib/api/client';
 import { amiriQuran, notoSansThai } from '../src/components/ui/fonts';
 
-type RecordValue = Record<string, any>;
+type DataRecord = Record<string, unknown>;
 type Status = 'idle' | 'loading' | 'success' | 'error' | 'empty';
 
 const agents = [
-  { id: 'ibn_kathir', label: 'อิบนุกะษีร' },
-  { id: 'al_tabari', label: 'อัฏ-เฏาะบะรี' },
-  { id: 'al_qurtubi', label: 'อัลกุรฏุบี' },
-  { id: 'ibn_ashur', label: 'อิบนุอาชูร' },
-  { id: 'al_saadi', label: 'อัสสะอฺดี' },
-  { id: 'al_zuhayli', label: 'วะฮ์บะฮ์ อัซซุฮัยลี' },
+  { id: 'ibn_kathir', label: 'Ibn Kathir', thai: 'อิบนุกะษีร', available: true },
+  { id: 'al_tabari', label: 'Al-Tabari', thai: 'อัฏ-เฏาะบะรี', available: true },
+  { id: 'al_qurtubi', label: 'Al-Qurtubi', thai: 'อัลกุรฏุบี', available: true },
+  { id: 'ibn_ashur', label: 'Ibn Ashur', thai: 'อิบนุอาชูร', available: false },
+  { id: 'al_saadi', label: "Al-Sa'di", thai: 'อัสสะอฺดี', available: true },
+  { id: 'al_zuhayli', label: 'Al-Zuhayli', thai: 'วะฮ์บะฮ์ อัซซุฮัยลี', available: false },
 ];
 
-function listOf(value: any): any[] {
-  if (Array.isArray(value)) return value;
-  if (Array.isArray(value?.data)) return value.data;
-  if (Array.isArray(value?.surahs)) return value.surahs;
-  if (Array.isArray(value?.ayahs)) return value.ayahs;
-  if (Array.isArray(value?.translations)) return value.translations;
+const evidence = [
+  { title: 'VERIFIED', description: 'ตรวจสอบกับแหล่งข้อมูลที่ผ่านการยืนยัน', color: 'bg-emerald-100 text-emerald-800' },
+  { title: 'SOURCE-ATTRIBUTED', description: 'พบแหล่งอ้างอิงและระบุที่มาได้ชัดเจน', color: 'bg-blue-100 text-blue-800' },
+  { title: 'SCHOLARLY-DIFFERENCE', description: 'แสดงทัศนะที่แตกต่างอย่างเป็นธรรม', color: 'bg-amber-100 text-amber-800' },
+  { title: 'UNVERIFIED', description: 'ข้อมูลยังอยู่ระหว่างการตรวจสอบ', color: 'bg-slate-100 text-slate-600' },
+  { title: 'AI-SYNTHESIS', description: 'สรุปเพื่อการเรียนรู้ ไม่ใช่คำอ้างอิงโดยตรง', color: 'bg-violet-100 text-violet-800' },
+];
+
+function isRecord(value: unknown): value is DataRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function listOf(value: unknown): DataRecord[] {
+  if (Array.isArray(value)) return value.filter(isRecord);
+  if (!isRecord(value)) return [];
+  for (const key of ['data', 'surahs', 'ayahs', 'translations']) {
+    if (Array.isArray(value[key])) return (value[key] as unknown[]).filter(isRecord);
+  }
   return [];
 }
 
-function textOf(value: any): string {
+function textOf(value: unknown): string {
   if (typeof value === 'string') return value;
-  if (!value || typeof value !== 'object') return '';
-  return value.text ?? value.text_uthmani ?? value.arabic_text ?? value.translation ?? value.translated_text ?? '';
+  if (!isRecord(value)) return '';
+  for (const key of ['text', 'text_uthmani', 'arabic_text', 'translation', 'translated_text']) {
+    if (typeof value[key] === 'string') return value[key];
+  }
+  return '';
 }
 
-function numberOf(value: any, fallback: number): number {
-  const number = Number(value?.number ?? value?.surah_number ?? value?.ayah_number);
+function stringOf(value: unknown, ...keys: string[]): string {
+  if (!isRecord(value)) return '';
+  for (const key of keys) {
+    if (typeof value[key] === 'string' && value[key]) return value[key] as string;
+  }
+  return '';
+}
+
+function numberOf(value: unknown, fallback: number): number {
+  if (!isRecord(value)) return fallback;
+  const number = Number(value.number ?? value.surah_number ?? value.ayah_number);
   return Number.isFinite(number) ? number : fallback;
+}
+
+function Icon({ name, className = 'h-5 w-5' }: { name: 'search' | 'menu' | 'book' | 'chat' | 'cards' | 'user' | 'play' | 'spark'; className?: string }) {
+  const common = { className, fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, viewBox: '0 0 24 24', 'aria-hidden': true as const };
+  if (name === 'search') return <svg {...common}><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>;
+  if (name === 'menu') return <svg {...common}><path d="M4 6h16M4 12h16M4 18h16" /></svg>;
+  if (name === 'book') return <svg {...common}><path d="M5 4.5h14v16H5z" /><path d="M9 4.5v16" /></svg>;
+  if (name === 'chat') return <svg {...common}><path d="M4 5h16v12H9l-5 3z" /></svg>;
+  if (name === 'cards') return <svg {...common}><rect x="6" y="6" width="13" height="15" rx="1" /><path d="M3 17V3h13" /></svg>;
+  if (name === 'user') return <svg {...common}><circle cx="12" cy="8" r="3.5" /><path d="M5 21a7 7 0 0 1 14 0" /></svg>;
+  if (name === 'play') return <svg {...common} fill="currentColor" stroke="none"><path d="M8 5v14l11-7z" /></svg>;
+  return <svg {...common}><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" /><path d="m19 15 .9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z" /></svg>;
 }
 
 function EvidenceBadge({ status }: { status?: string }) {
   if (!status) return null;
   const colors: Record<string, string> = {
     VERIFIED: 'bg-emerald-100 text-emerald-800',
-    'SOURCE-ATTRIBUTED': 'bg-sky-100 text-sky-800',
+    'SOURCE-ATTRIBUTED': 'bg-blue-100 text-blue-800',
     'SCHOLARLY-DIFFERENCE': 'bg-amber-100 text-amber-800',
     UNVERIFIED: 'bg-slate-100 text-slate-700',
     'AI-SYNTHESIS': 'bg-violet-100 text-violet-800',
   };
-  return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${colors[status] ?? colors.UNVERIFIED}`}>{status}</span>;
+  return <span className={`inline-flex rounded-full px-3 py-1 text-[10px] font-bold tracking-wide ${colors[status] ?? colors.UNVERIFIED}`}>{status}</span>;
+}
+
+function BrandMark() {
+  return <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#0E5E4F] text-lg text-white">ق</span>;
 }
 
 function Landing() {
   const router = useRouter();
   const openReader = () => router.push('/?view=reader');
-  const features = [
-    ['01', 'อ่านอาหรับอย่างถูกทิศทาง', 'ตัวอักษรอาหรับแสดงแบบ RTL พร้อมตัวเลือกอายะฮ์ที่ชัดเจน'],
-    ['02', 'คำแปลภาษาไทย', 'ดูคำแปลของอายะฮ์ที่เลือกจากบริการข้อมูล ไม่แสดงข้อมูลจำลอง'],
-    ['03', 'ศึกษาอย่างมีหลักฐาน', 'คำอธิบายแสดงสถานะหลักฐานและแหล่งอ้างอิงเมื่อระบบได้รับข้อมูล'],
+  const scholars = [
+    ['IK', 'Ibn Kathir', 'เน้นรายงานและคำอธิบายจากแหล่งดั้งเดิม'],
+    ['AT', 'Al-Tabari', 'รวบรวมรายงานและวิเคราะห์ภาษา'],
+    ['AQ', 'Al-Qurtubi', 'พิจารณาประเด็นนิติศาสตร์อิสลาม'],
+    ['IA', 'Ibn Ashur', 'วิเคราะห์ภาษาและวัตถุประสงค์'],
+    ['AS', "Al-Sa'di", 'อธิบายอย่างชัดเจนและนำไปใช้ได้'],
+    ['WZ', 'Wahbah Al-Zuhayli', 'มุมมองร่วมสมัยและเปรียบเทียบฟิกฮ์'],
   ];
+
   return (
-    <main className={`${notoSansThai.className} min-h-screen overflow-hidden bg-[#F5F7F6] text-[#1E293B]`}>
-      <header className="sticky top-0 z-20 border-b border-[#073B32]/10 bg-[#F5F7F6]/95 backdrop-blur"><div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5 lg:px-10"><button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="flex items-center gap-3 font-semibold tracking-wide text-[#073B32]"><span className="grid h-10 w-10 place-items-center rounded-xl bg-[#073B32] text-lg text-white">ق</span>QURAN AI</button><nav className="hidden gap-8 text-sm text-slate-600 md:flex"><a href="#features">คุณสมบัติ</a><a href="#method">วิธีใช้งาน</a><a href="#evidence">หลักฐาน</a></nav><button onClick={openReader} className="rounded-full bg-[#0E5E4F] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#073B32]">เปิด Reader</button></div></header>
-      <section className="relative mx-auto grid min-h-[720px] max-w-7xl items-center gap-16 px-6 py-24 lg:grid-cols-[1fr_.9fr] lg:px-10 lg:py-32"><div><p className="mb-6 text-sm font-semibold uppercase tracking-[.24em] text-[#C9A227]">อ่าน • ศึกษา • ทำความเข้าใจ</p><h1 className="text-5xl font-semibold leading-[1.12] tracking-tight text-[#073B32] md:text-7xl">อ่านอัลกุรอาน<br /><span className="text-[#0E5E4F]">อย่างเข้าใจ</span></h1><p className="mt-8 max-w-xl text-lg leading-8 text-slate-600">พื้นที่ศึกษาอัลกุรอานภาษาไทยที่เชื่อมการอ่านภาษาอาหรับ คำแปล และคำอธิบายไว้ใน workspace เดียว</p><div className="mt-10 flex flex-wrap items-center gap-4"><button onClick={openReader} className="rounded-full bg-[#0E5E4F] px-7 py-4 font-semibold text-white shadow-xl shadow-[#0E5E4F]/20 hover:bg-[#073B32]">เริ่มอ่านกุรอาน <span className="ml-2">→</span></button><a href="#features" className="rounded-full px-5 py-4 text-sm font-semibold text-[#0E5E4F] hover:bg-white">ดูคุณสมบัติ</a></div><div className="mt-12 flex flex-wrap gap-8 text-sm text-slate-500"><span>✓ ภาษาไทยเป็นหลัก</span><span>✓ อาหรับ RTL</span><span>✓ สถานะหลักฐานชัดเจน</span></div></div><div className="relative mx-auto w-full max-w-lg"><div className="absolute -right-8 -top-8 h-32 w-32 rounded-full border border-[#C9A227]/40" /><div className="relative rounded-[2rem] bg-[#E6F4F1] p-5 shadow-2xl shadow-[#073B32]/10 md:p-8"><div className="rounded-2xl border border-[#0E5E4F]/10 bg-white p-5"><div className="mb-6 flex justify-between text-xs text-slate-400"><span>QURAN AI READER</span><span className="rounded-full bg-[#FEF9E7] px-3 py-1 text-[#8A6C11]">Study mode</span></div><div className="h-2 w-24 rounded-full bg-[#C9A227]" /><div className="mt-6 space-y-3"><div className="h-3 rounded-full bg-slate-100" /><div className="h-3 w-4/5 rounded-full bg-slate-100" /><div className="h-3 w-3/5 rounded-full bg-slate-100" /></div><div className="mt-8 rounded-xl bg-[#073B32] p-8 text-center"><div className="mx-auto mb-4 h-16 w-16 rounded-full border border-[#C9A227]/60" /><p className="text-sm text-white/80">เลือกอายะฮ์เพื่อเริ่มศึกษา</p></div></div></div></div></section>
+    <main className={`${notoSansThai.className} min-h-screen bg-[#F5F7F6] text-[#1E293B]`}>
+      <header className="sticky top-0 z-30 border-b border-[#073B32]/10 bg-white/95 backdrop-blur">
+        <div className="mx-auto flex h-[68px] max-w-7xl items-center justify-between px-5 lg:px-10">
+          <a href="#" className="flex items-center gap-2.5 font-bold tracking-tight text-[#073B32]"><BrandMark />QURAN AI</a>
+          <nav className="hidden items-center gap-8 text-sm text-slate-600 md:flex">
+            <a className="hover:text-[#0E5E4F]" href="#features">หลักฐาน</a>
+            <a className="hover:text-[#0E5E4F]" href="#scholars">แนวตัฟซีร</a>
+            <a className="hover:text-[#0E5E4F]" href="#learning">เรียนรู้</a>
+            <a className="hover:text-[#0E5E4F]" href="#plans">แพ็กเกจ</a>
+          </nav>
+          <div className="flex items-center gap-2">
+            <button onClick={openReader} className="rounded-full border border-[#d6e0dc] bg-white px-4 py-2 text-xs font-semibold text-[#073B32] hover:bg-[#F5F7F6]">เข้าสู่ระบบ</button>
+            <button onClick={openReader} className="rounded-full bg-[#0E5E4F] px-4 py-2 text-xs font-semibold text-white hover:bg-[#073B32]">เริ่มอ่านฟรี</button>
+          </div>
+        </div>
+      </header>
 
-      <section id="features" className="border-y border-slate-200 bg-white"><div className="mx-auto max-w-7xl px-6 py-24 lg:px-10"><div className="max-w-2xl"><p className="text-sm font-semibold uppercase tracking-[.2em] text-[#C9A227]">Built for reflection</p><h2 className="mt-4 text-4xl font-semibold tracking-tight text-[#073B32] md:text-5xl">ทุกส่วนช่วยให้การศึกษา<br />มีความหมายมากขึ้น</h2></div><div className="mt-16 grid gap-5 md:grid-cols-3">{features.map(([number, title, description]) => <article key={number} className="rounded-2xl border border-slate-200 p-7 transition hover:-translate-y-1 hover:border-[#0E5E4F]/30 hover:shadow-lg"><span className="text-sm font-bold text-[#C9A227]">{number}</span><h3 className="mt-12 text-xl font-semibold text-[#073B32]">{title}</h3><p className="mt-4 leading-7 text-slate-600">{description}</p></article>)}</div></div></section>
+      <section className="mx-auto max-w-7xl px-5 pb-16 pt-14 text-center md:pb-20 md:pt-20">
+        <p className="mx-auto w-fit rounded-full bg-[#E6F4F1] px-4 py-1.5 text-[11px] font-semibold text-[#0E5E4F]">พื้นที่ศึกษาอัลกุรอานอย่างมีหลักฐาน</p>
+        <h1 className="mx-auto mt-5 max-w-3xl text-3xl font-bold leading-tight tracking-tight text-[#073B32] sm:text-4xl md:text-5xl">
+          ศึกษาอัลกุรอานและตัฟซีร<br className="hidden sm:block" /> อย่างมีหลักฐาน ทุกบรรทัด
+        </h1>
+        <p className="mx-auto mt-4 max-w-2xl text-sm leading-7 text-slate-600 md:text-base">
+          อ่านอายะฮ์ เปรียบเทียบกับทัศนะนักปราชญ์ และทบทวนด้วยเครื่องมือการเรียนรู้
+          โดยแยกหลักฐานและคำอธิบาย AI ให้เห็นชัดเจน
+        </p>
+        <div className="mt-6 flex flex-wrap justify-center gap-3">
+          <button onClick={openReader} className="rounded-lg bg-[#0E5E4F] px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-[#073B32]">เริ่มอ่านฟรี</button>
+          <a href="#features" className="rounded-lg border border-[#cbd9d4] bg-white px-5 py-3 text-sm font-semibold text-[#073B32] hover:bg-slate-50">ดูวิธีตรวจสอบหลักฐาน</a>
+        </div>
 
-      <section id="method" className="mx-auto grid max-w-7xl gap-14 px-6 py-24 lg:grid-cols-[.8fr_1.2fr] lg:px-10 lg:py-32"><div><p className="text-sm font-semibold uppercase tracking-[.2em] text-[#C9A227]">Simple study flow</p><h2 className="mt-4 text-4xl font-semibold text-[#073B32]">เริ่มต้นได้ในไม่กี่ขั้นตอน</h2><p className="mt-6 leading-8 text-slate-600">เลือกซูเราะฮ์ เลือกอายะฮ์ แล้วใช้พื้นที่ด้านข้างเพื่ออ่านคำอธิบายตามข้อมูลที่ระบบมี</p></div><div className="space-y-4">{[['01', 'เลือกซูเราะฮ์', 'เปิดสารบัญและเลือกซูเราะฮ์ที่ต้องการอ่าน'], ['02', 'อ่านและเลือกอายะฮ์', 'ดูข้อความอาหรับแบบ RTL และคำแปลภาษาไทย'], ['03', 'ขอคำอธิบาย', 'เลือก agent และตรวจดูสถานะหลักฐานก่อนนำไปศึกษา']].map(([number, title, description]) => <div key={number} className="flex gap-5 rounded-2xl bg-white p-6 shadow-sm"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#E6F4F1] text-sm font-bold text-[#0E5E4F]">{number}</span><div><h3 className="font-semibold text-[#073B32]">{title}</h3><p className="mt-1 text-sm leading-6 text-slate-600">{description}</p></div></div>)}</div></section>
+        <div className="mx-auto mt-10 max-w-5xl overflow-hidden rounded-2xl border border-[#d9e3df] bg-white text-left shadow-[0_24px_60px_-32px_rgba(7,59,50,.35)]">
+          <div className="flex h-9 items-center gap-1.5 border-b border-slate-100 bg-[#fbfcfc] px-4">
+            <i className="h-2 w-2 rounded-full bg-slate-300" /><i className="h-2 w-2 rounded-full bg-slate-300" /><i className="h-2 w-2 rounded-full bg-slate-300" />
+            <span className="ml-3 text-[10px] text-slate-400">quran.ai / reader</span>
+          </div>
+          <div className="grid min-h-[245px] md:grid-cols-[150px_minmax(0,1fr)_250px]">
+            <div className="hidden border-r border-slate-100 bg-[#fafcfb] p-4 md:block">
+              <p className="mb-3 text-[10px] font-bold text-slate-500">สารบัญ</p>
+              <div className="rounded-lg bg-[#E6F4F1] px-3 py-2 text-[10px] font-semibold text-[#0E5E4F]">1 · อัลฟาติฮะฮ์</div>
+              <div className="mt-2 px-3 py-2 text-[10px] text-slate-500">2 · อัลบะเกาะเราะฮ์</div>
+              <div className="mt-2 px-3 py-2 text-[10px] text-slate-500">3 · อาล อิมรอน</div>
+            </div>
+            <div className="flex min-h-[210px] flex-col items-center justify-center bg-[#F8FAF9] p-6 text-center">
+              <p className="text-[10px] font-semibold text-slate-400">ตัวอย่างพื้นที่อ่าน</p>
+              <div className={`${amiriQuran.className} my-5 h-12 w-4/5 rounded-xl bg-white`} aria-hidden="true" />
+              <div className="h-2 w-2/3 rounded-full bg-[#e8eeeb]" />
+              <p className="mt-3 text-[10px] text-slate-400">ข้อความและคำแปลจะแสดงจาก API เมื่อเปิด Reader</p>
+            </div>
+            <div className="hidden border-l border-slate-100 p-4 md:block">
+              <div className="flex items-center justify-between gap-2 text-[10px] font-semibold text-[#073B32]">Tafsir Agent <EvidenceBadge status="SOURCE-ATTRIBUTED" /></div>
+              <div className="mt-3 rounded-lg border border-slate-100 p-3"><div className="h-2 rounded bg-slate-100" /><div className="mt-2 h-2 w-4/5 rounded bg-slate-100" /><div className="mt-2 h-2 w-3/5 rounded bg-slate-100" /></div>
+              <div className="mt-3 flex items-center justify-between text-[10px] font-semibold text-[#073B32]">สรุปเพื่อการเรียนรู้ <EvidenceBadge status="AI-SYNTHESIS" /></div>
+            </div>
+          </div>
+        </div>
+      </section>
 
-      <section id="evidence" className="bg-[#073B32] text-white"><div className="mx-auto grid max-w-7xl items-center gap-10 px-6 py-24 lg:grid-cols-[1fr_auto] lg:px-10"><div><p className="text-sm font-semibold uppercase tracking-[.2em] text-[#E6C75A]">Evidence first</p><h2 className="mt-4 max-w-2xl text-4xl font-semibold md:text-5xl">ความชัดเจนสำคัญกว่าคำตอบที่ดูสมบูรณ์</h2><p className="mt-6 max-w-2xl leading-8 text-white/70">ระบบแยกคำอธิบาย AI ออกจากข้อมูลอ้างอิง และไม่สร้าง citation เมื่อไม่มีข้อมูลรองรับ</p></div><button onClick={openReader} className="rounded-full bg-[#C9A227] px-7 py-4 font-semibold text-[#073B32] hover:bg-[#E6C75A]">เปิดพื้นที่ศึกษา →</button></div></section>
+      <section id="features" className="border-y border-slate-200 bg-white">
+        <div className="mx-auto max-w-5xl px-5 py-14 md:py-16">
+          <p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#9A7914]">ความโปร่งใส</p>
+          <h2 className="mt-2 text-2xl font-bold leading-snug text-[#073B32] md:text-3xl">รู้ทันที่มาของข้อความได้จากไหน</h2>
+          <p className="mt-2 max-w-2xl text-xs leading-6 text-slate-600 md:text-sm">ทุกคำอธิบายแยกสถานะหลักฐานอย่างชัดเจน หากยังไม่มีข้อมูลที่ตรวจสอบได้ ระบบจะแจ้งข้อจำกัดแทนการสร้างคำตอบ</p>
+          <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {evidence.map((item) => <article key={item.title} className="min-h-24 rounded-xl border border-slate-200 p-4"><span className={`rounded-full px-2 py-1 text-[9px] font-bold ${item.color}`}>{item.title}</span><p className="mt-3 text-[11px] leading-5 text-slate-600">{item.description}</p></article>)}
+          </div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#efdfaa] bg-[#FEF9E7] px-4 py-3 text-[11px] leading-5 text-[#604d17]">
+            <span><strong>เมื่อหลักฐานไม่พอ:</strong> ระบบจะแจ้งว่า “The available classical sources are insufficient to establish this specific detail.”</span>
+            <EvidenceBadge status="UNVERIFIED" />
+          </div>
+        </div>
+      </section>
 
-      <footer className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-10 text-sm text-slate-500 md:flex-row md:items-center md:justify-between lg:px-10"><span className="font-semibold text-[#073B32]">QURAN AI</span><span>Thai-first Quran study workspace</span><button onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })} className="text-left hover:text-[#0E5E4F] md:text-right">กลับขึ้นด้านบน ↑</button></footer>
+      <section id="scholars" className="mx-auto max-w-5xl px-5 py-14 md:py-16">
+        <p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#9A7914]">ตัฟซีร 6 สำนัก</p>
+        <h2 className="mt-2 text-2xl font-bold leading-snug text-[#073B32] md:text-3xl">หกเอเจนต์ หกมุมมอง ไม่สวมบทเป็นนักปราชญ์</h2>
+        <p className="mt-2 max-w-2xl text-xs leading-6 text-slate-600 md:text-sm">แต่ละเอเจนต์ยึดวิธีพิจารณาตามแนวทาง และระบุในฐานะ “Agent: ตามหนังสือ …” เสมอ</p>
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {scholars.map(([initials, name, description]) => <article key={name} className="rounded-xl border border-slate-200 bg-white p-4"><span className="grid h-8 w-8 place-items-center rounded-lg bg-[#E6F4F1] text-[10px] font-bold text-[#0E5E4F]">{initials}</span><h3 className="mt-3 text-xs font-bold text-slate-800">{name}</h3><p className="mt-1 text-[10px] leading-5 text-slate-500">{description}</p></article>)}
+        </div>
+        <div className="mt-4 overflow-hidden rounded-xl border border-slate-200 bg-white p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-xs font-bold text-slate-800">เมทริกซ์ข้อคิดเห็น: เทียบกับหลักฐานอ้างอิง</h3><span className="flex gap-2"><EvidenceBadge status="VERIFIED" /><EvidenceBadge status="SCHOLARLY-DIFFERENCE" /></span></div>
+          <div className="mt-4 grid grid-cols-[80px_repeat(3,1fr)] items-center gap-2 text-[9px] text-slate-500 sm:grid-cols-[110px_repeat(3,1fr)]">
+            <span />
+            {scholars.slice(0, 3).map(([, name]) => <span key={name} className="truncate font-semibold text-slate-600">{name}</span>)}
+            {[1, 2].map((row) => <div key={row} className="contents"><span>ประเด็นที่ {row}</span><span className={`h-7 rounded-md ${row === 1 ? 'bg-[#d9efeb]' : 'bg-[#FEF0C0]'}`} /><span className={`h-7 rounded-md ${row === 1 ? 'bg-[#d9efeb]' : 'bg-blue-100'}`} /><span className={`h-7 rounded-md ${row === 1 ? 'bg-[#d9efeb]' : 'bg-[#FEF0C0]'}`} /></div>)}
+          </div>
+          <p className="mt-3 text-[10px] text-slate-400">ภาพประกอบรูปแบบการเปรียบเทียบ · เนื้อหาจริงต้องมาจากผล API</p>
+        </div>
+      </section>
+
+      <section id="learning" className="border-y border-slate-200 bg-white">
+        <div className="mx-auto max-w-5xl px-5 py-14 md:py-16">
+          <p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#9A7914]">เรียนรู้ให้เข้าใจ</p>
+          <h2 className="mt-2 text-2xl font-bold text-[#073B32] md:text-3xl">จากการอ่าน สู่ความเข้าใจที่อยู่ติดตัว</h2>
+          <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {[
+              ['คอร์สแบบบทสั้น 5–10 นาที', 'ทฤษฎี แบบฝึกหัด และสรุป พร้อมเส้นทางการเรียน'],
+              ['แฟลชการ์ดพลิก 3 มิติ', 'ทบทวนคำศัพท์และความเข้าใจอย่างเป็นขั้นตอน'],
+              ['แบบทดสอบปรับระดับได้', 'เลือก 5, 10 หรือ 20 ข้อ และดูคำอธิบายประกอบ'],
+              ['พื้นที่ศึกษาจากเอกสาร PDF', 'อ่านเอกสารพร้อมพื้นที่จดบันทึกและค้นคว้า'],
+            ].map(([title, description]) => <article key={title} className="min-h-40 rounded-xl border border-slate-200 p-4"><h3 className="text-xs font-bold text-slate-800">{title}</h3><p className="mt-2 text-[10px] leading-5 text-slate-500">{description}</p><div className="mt-5 flex h-9 items-end gap-2" aria-hidden="true"><div className="h-5 w-1/3 rounded-md bg-[#E6F4F1]" /><div className="h-8 w-1/3 rounded-md bg-[#FEF9E7]" /><div className="h-6 w-1/4 rounded-md bg-slate-100" /></div><p className="mt-3 text-[9px] font-semibold text-slate-400">ตัวอย่างแนวคิด · ยังไม่เปิดใช้งาน</p></article>)}
+          </div>
+        </div>
+      </section>
+
+      <section id="plans" className="mx-auto max-w-5xl px-5 py-14 md:py-16">
+        <p className="text-[10px] font-bold uppercase tracking-[.18em] text-[#9A7914]">แพ็กเกจ</p>
+        <h2 className="mt-2 text-2xl font-bold text-[#073B32] md:text-3xl">เริ่มฟรี อัปเกรดเมื่อพร้อม</h2>
+        <div className="mt-6 grid max-w-3xl gap-3 sm:grid-cols-2">
+          <article className="rounded-xl border border-slate-200 bg-white p-5"><h3 className="text-xs font-bold">ฟรี</h3><p className="mt-3 text-3xl font-bold text-[#073B32]">$0</p><ul className="mt-4 space-y-2 text-[10px] text-slate-600"><li>• เข้าถึงสารบัญและ Reader</li><li>• คำแปลตามข้อมูลที่มี</li><li>• ศึกษาผ่าน Al-Sa'di</li></ul><button onClick={openReader} className="mt-5 w-full rounded-lg border border-[#cbd9d4] py-2 text-xs font-semibold text-[#073B32] hover:bg-[#F5F7F6]">เริ่มอ่านฟรี</button></article>
+          <article className="rounded-xl border border-[#073B32] bg-[#073B32] p-5 text-white"><div className="flex items-center justify-between"><h3 className="text-xs font-bold">Premium Scholar</h3><span className="rounded-full bg-[#C9A227] px-2 py-1 text-[9px] font-bold text-[#073B32]">ตัวอย่าง</span></div><p className="mt-3 text-3xl font-bold">$5.99 <span className="text-[10px] font-normal text-white/70">ต่อเดือน · ราคาเสนอ</span></p><ul className="mt-4 space-y-2 text-[10px] text-white/80"><li>• เข้าถึงเอเจนต์ที่รองรับ</li><li>• เปรียบเทียบมุมมองนักปราชญ์</li><li>• เครื่องมือทบทวนการเรียนรู้</li></ul><button disabled className="mt-5 w-full cursor-not-allowed rounded-lg bg-[#C9A227] py-2 text-xs font-semibold text-[#073B32] opacity-80">ยังไม่เปิดให้สมัคร</button></article>
+        </div>
+        <p className="mt-3 text-[10px] text-slate-400">แพ็กเกจ Premium เป็นเพียงตัวอย่างจากแบบออกแบบ ยังไม่มีการเรียกเก็บเงินหรือสมัครใช้งาน</p>
+      </section>
+
+      <footer className="border-t border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-5xl flex-col gap-3 px-5 py-7 text-[10px] text-slate-500 sm:flex-row sm:items-center sm:justify-between"><span className="font-bold text-[#073B32]">QURAN AI</span><span>พื้นที่ศึกษาอัลกุรอานโดยยึดหลักฐานและความโปร่งใส</span><nav className="flex gap-4"><a href="#features">หลักฐาน</a><a href="#scholars">นักปราชญ์</a><a href="#plans">แพ็กเกจ</a></nav></div>
+      </footer>
     </main>
   );
 }
 
 export default function Home() {
-  return <Suspense fallback={<main className="min-h-screen bg-[#f7f5ef]" />}><Workspace /></Suspense>;
+  return <Suspense fallback={<main className="min-h-screen bg-[#F5F7F6]" />}><Workspace /></Suspense>;
 }
 
 function Workspace() {
   const params = useSearchParams();
+  const router = useRouter();
   const reader = params?.get('view') === 'reader';
   if (!reader) return <Landing />;
   const surah = Number(params?.get('surah')) || 1;
@@ -88,34 +241,269 @@ function Workspace() {
 
 function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAyah: number }) {
   const router = useRouter();
-  const [surahs, setSurahs] = useState<any[]>([]);
+  const [surahs, setSurahs] = useState<DataRecord[]>([]);
   const [surah, setSurah] = useState(initialSurah);
   const [ayah, setAyah] = useState(initialAyah);
-  const [ayahs, setAyahs] = useState<any[]>([]);
-  const [ayahData, setAyahData] = useState<RecordValue | null>(null);
+  const [ayahs, setAyahs] = useState<DataRecord[]>([]);
+  const [ayahData, setAyahData] = useState<DataRecord | null>(null);
   const [translation, setTranslation] = useState('');
   const [agent, setAgent] = useState(agents[0].id);
-  const [tafsir, setTafsir] = useState<RecordValue | null>(null);
+  const [tafsir, setTafsir] = useState<DataRecord | null>(null);
   const [surahStatus, setSurahStatus] = useState<Status>('loading');
   const [contentStatus, setContentStatus] = useState<Status>('idle');
   const [tafsirStatus, setTafsirStatus] = useState<Status>('idle');
   const [error, setError] = useState('');
+  const [translationError, setTranslationError] = useState('');
+  const [search, setSearch] = useState('');
+  const [mobilePanelOpen, setMobilePanelOpen] = useState(true);
 
-  useEffect(() => { apiClient.get('/surahs').then((data) => { const items = listOf(data); setSurahs(items); setSurahStatus(items.length ? 'success' : 'empty'); }).catch(() => { setSurahStatus('error'); }); }, []);
-  useEffect(() => { let cancelled = false; setContentStatus('loading'); setError(''); setTafsir(null); setTafsirStatus('idle'); Promise.all([apiClient.get(`/surahs/${surah}/ayahs`), apiClient.get(`/ayahs/${surah}/${ayah}`), apiClient.get(`/ayahs/${surah}/${ayah}/translations?language=th`)]).then(([surahData, verseData, translationData]) => { if (cancelled) return; const verse = verseData?.data ?? verseData; const thai = listOf(translationData)[0]; setAyahs(listOf(surahData)); setAyahData(verse); setTranslation(textOf(thai)); setContentStatus(verse ? 'success' : 'empty'); }).catch(() => { if (!cancelled) { setContentStatus('error'); setError('ไม่สามารถโหลดข้อมูลอายะฮ์ได้'); } }); return () => { cancelled = true; }; }, [surah, ayah]);
+  useEffect(() => {
+    apiClient.get<unknown>('/surahs')
+      .then((data) => {
+        const items = listOf(data);
+        setSurahs(items);
+        setSurahStatus(items.length ? 'success' : 'empty');
+      })
+      .catch(() => setSurahStatus('error'));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setContentStatus('loading');
+    setError('');
+    setTafsir(null);
+    setTafsirStatus('idle');
+    Promise.all([
+      apiClient.get<unknown>(`/surahs/${surah}/ayahs`),
+      apiClient.get<unknown>(`/ayahs/${surah}/${ayah}`),
+      apiClient.get<unknown>(`/ayahs/${surah}/${ayah}/translations?language=th`),
+    ]).then(([surahData, verseData, translationData]) => {
+      if (cancelled) return;
+      const verse = isRecord(verseData) && isRecord(verseData.data) ? verseData.data : verseData;
+      const translations = listOf(translationData);
+      setAyahs(listOf(surahData));
+      setAyahData(isRecord(verse) ? verse : null);
+      setTranslation(textOf(translations[0]));
+      setContentStatus(isRecord(verse) ? 'success' : 'empty');
+    }).catch(() => {
+      if (!cancelled) {
+        setContentStatus('error');
+        setError('ไม่สามารถโหลดข้อมูลอายะฮ์ได้');
+      }
+    });
+    return () => { cancelled = true; };
+  }, [surah, ayah]);
 
   const selectedSurah = useMemo(() => surahs.find((item) => numberOf(item, 0) === surah), [surahs, surah]);
-  const selectSurah = (value: number) => { setSurah(value); setAyah(1); router.replace(`/?view=reader&surah=${value}&ayah=1`, { scroll: false }); };
-  const selectAyah = (value: number) => { setAyah(value); router.replace(`/?view=reader&surah=${surah}&ayah=${value}`, { scroll: false }); };
-  const loadTafsir = async () => { setTafsirStatus('loading'); setTafsir(null); const result = await apiClient.getAgentExplanation(surah, ayah, agent); if (result) { setTafsir(result); setTafsirStatus('success'); } else setTafsirStatus('error'); };
-  const arabic = textOf(ayahData);
+  const surahName = stringOf(selectedSurah, 'name_th', 'transliteration', 'name_simple', 'name') || `ซูเราะฮ์ ${surah}`;
+  const filteredAyahs = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return ayahs;
+    return ayahs.filter((item) => {
+      const number = numberOf(item, 0);
+      const verseText = textOf(item);
+      return `${surah}:${number}`.includes(query) || String(number).includes(query) || verseText.includes(search.trim());
+    });
+  }, [ayahs, search, surah]);
+  const selectSurah = (value: number) => {
+    setSurah(value);
+    setAyah(1);
+    setSearch('');
+    setTafsir(null);
+    setTafsirStatus('idle');
+    setTranslationError('');
+    router.replace(`/?view=reader&surah=${value}&ayah=1`, { scroll: false });
+  };
+  const selectAyah = (value: number) => {
+    setAyah(value);
+    setTafsir(null);
+    setTafsirStatus('idle');
+    setTranslationError('');
+    router.replace(`/?view=reader&surah=${surah}&ayah=${value}`, { scroll: false });
+  };
+  const loadTafsir = async () => {
+    setTafsirStatus('loading');
+    setTafsir(null);
+    setError('');
+    setTranslationError('');
+    try {
+      const response = await apiClient.getTafsirPassage(surah, ayah, agent);
+      const passage = isRecord(response) && isRecord(response.data) ? response.data : null;
+      if (!passage) throw new Error('เซิร์ฟเวอร์ส่งข้อมูลตัฟซีรในรูปแบบที่ไม่รู้จัก');
+      setTafsir(passage);
+      setTafsirStatus('success');
 
-  return <main className={`${notoSansThai.className} flex min-h-screen flex-col bg-[#F5F7F6] text-[#1E293B]`}>
-    <header className="flex h-16 shrink-0 items-center justify-between border-b border-[#073B32]/10 bg-white px-5 lg:px-8"><button onClick={() => router.push('/')} className="flex items-center gap-2 font-semibold text-[#073B32]"><span className="grid h-8 w-8 place-items-center rounded-lg bg-[#073B32] text-white">ق</span> QURAN AI</button><div className="hidden items-center gap-5 text-xs text-slate-500 md:flex"><span>ภาษาไทย</span><span className="h-4 w-px bg-slate-200" /><span>พื้นที่ศึกษาอัลกุรอาน</span></div><button onClick={() => router.push('/')} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50">หน้าหลัก</button></header>
-    <div className="grid flex-1 lg:grid-cols-[260px_minmax(0,1fr)_420px]">
-      <aside className="border-b border-slate-200 bg-white p-4 lg:border-b-0 lg:border-r"><div className="mb-6 flex items-center justify-between"><h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">สารบัญซูเราะฮ์</h2><span className="rounded-full bg-[#FEF9E7] px-2 py-1 text-[10px] font-bold text-[#8A6C11]">QURAN</span></div><nav className="mb-6 space-y-1 border-b border-slate-100 pb-5"><button className="flex w-full items-center gap-3 rounded-lg bg-[#E6F4F1] px-3 py-2 text-left text-sm font-semibold text-[#0E5E4F]"><span>▦</span> ดัชนีกุรอาน</button><button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-slate-500 hover:bg-slate-50"><span>⌁</span> เส้นทางการศึกษา</button><button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-slate-500 hover:bg-slate-50"><span>☆</span> รายการบันทึก</button></nav>{surahStatus === 'loading' && <p className="text-sm text-slate-400">กำลังโหลด...</p>}{surahStatus === 'error' && <p className="text-sm text-red-600">โหลดสารบัญไม่สำเร็จ</p>}<div className="grid max-h-64 grid-cols-2 gap-2 overflow-y-auto lg:max-h-[calc(100vh-130px)] lg:grid-cols-1">{surahs.map((item) => { const id = numberOf(item, 0); return <button key={id} onClick={() => selectSurah(id)} className={`rounded-xl px-3 py-2 text-left text-sm transition ${id === surah ? 'bg-[#e6eee8] font-semibold text-[#193b35]' : 'hover:bg-slate-50'}`}><span className="mr-2 text-xs text-slate-400">{id}</span>{item.name_th ?? item.transliteration ?? item.name ?? `ซูเราะฮ์ ${id}`}</button>; })}</div></aside>
-      <section className="min-w-0 border-b border-slate-200 bg-[#F5F7F6] p-5 lg:border-b-0 lg:p-10"><div className="mx-auto max-w-3xl"><div className="mb-8 flex items-center justify-between"><div><p className="text-xs uppercase tracking-widest text-[#b27b45]">ซูเราะฮ์ {selectedSurah?.name_th ?? selectedSurah?.name ?? surah}</p><h1 className="mt-1 text-2xl font-semibold text-[#193b35]">อายะฮ์ {ayah}</h1></div><button onClick={() => router.push('/')} className="rounded-lg border px-3 py-2 text-sm hover:bg-white">หน้าหลัก</button></div>{contentStatus === 'loading' && <div className="space-y-4"><div className="h-36 animate-pulse rounded-2xl bg-slate-200" /><div className="h-8 animate-pulse rounded bg-slate-200" /></div>}{contentStatus === 'error' && <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-700">{error}<button onClick={() => selectAyah(ayah)} className="ml-3 underline">ลองใหม่</button></div>}{contentStatus === 'empty' && <div className="rounded-2xl border bg-white p-8 text-center text-slate-500">ไม่พบข้อมูลอายะฮ์นี้</div>}{contentStatus === 'success' && <><div className={`${amiriQuran.className} rounded-2xl bg-white p-8 text-right text-4xl leading-[2.1] text-[#193b35] shadow-sm md:text-5xl`} dir="rtl" lang="ar">{arabic || 'ไม่มีข้อความอาหรับจากแหล่งข้อมูล'}</div>{translation ? <div className="mt-5 rounded-2xl border border-[#dbe8df] bg-[#eef6f0] p-6 text-lg leading-8">{translation}</div> : <div className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-800">ยังไม่มีคำแปลภาษาไทยสำหรับอายะฮ์นี้</div>}<div className="mt-5 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white p-3"><button disabled className="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-400">▶ เสียงยังไม่พร้อม</button><button disabled className="rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-400">☆ บันทึก</button><span className="ml-auto text-xs text-slate-400">อายะฮ์ {ayah}</span></div><div className="mt-6 flex flex-wrap gap-2">{ayahs.map((item) => { const id = numberOf(item, 0); return <button key={id} onClick={() => selectAyah(id)} className={`h-9 min-w-9 rounded-lg border px-2 text-sm ${id === ayah ? 'border-[#193b35] bg-[#193b35] text-white' : 'bg-white hover:border-[#193b35]'}`}>{id}</button>; })}</div></>}</div></section>
-      <aside className="flex min-h-[520px] flex-col border-l border-slate-200 bg-white"><div className="border-b p-5"><div className="mb-4 flex gap-5 border-b border-slate-100 text-sm"><button className="border-b-2 border-[#0E5E4F] pb-3 font-semibold text-[#0E5E4F]">ตัฟซีร</button><button disabled className="pb-3 text-slate-400">Quiz</button><button disabled className="pb-3 text-slate-400">Cards</button></div><p className="text-xs font-bold uppercase tracking-widest text-slate-400">คำอธิบายอายะฮ์</p><div className="mt-4 grid grid-cols-2 gap-2">{agents.map((item) => <button key={item.id} onClick={() => setAgent(item.id)} className={`rounded-lg border px-2 py-2 text-xs ${agent === item.id ? 'border-[#193b35] bg-[#e6eee8] text-[#193b35]' : 'hover:bg-slate-50'}`}>{item.label}</button>)}</div><button onClick={loadTafsir} disabled={tafsirStatus === 'loading' || contentStatus !== 'success'} className="mt-4 w-full rounded-xl bg-[#193b35] px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{tafsirStatus === 'loading' ? 'กำลังค้นคว้า...' : 'ขอคำอธิบาย'}</button></div><div className="flex-1 overflow-y-auto p-5">{tafsirStatus === 'idle' && <p className="text-sm leading-7 text-slate-500">เลือกตัวแทนและกด “ขอคำอธิบาย” เพื่อเริ่มศึกษา</p>}{tafsirStatus === 'error' && <p className="rounded-xl bg-amber-50 p-4 text-sm leading-7 text-amber-800">ยังไม่สามารถรับคำอธิบายจากบริการได้ กรุณาลองใหม่ภายหลัง</p>}{tafsir && <div><div className="mb-4 flex items-center justify-between"><h2 className="font-semibold text-[#193b35]">{tafsir.agent_id ?? agent}</h2><EvidenceBadge status={tafsir.evidence_status} /></div><p className="whitespace-pre-wrap text-sm leading-7">{tafsir.answer ?? tafsir.explanation ?? 'ไม่มีคำอธิบายจากบริการ'}</p>{Array.isArray(tafsir.citations) && tafsir.citations.length > 0 ? <div className="mt-6 border-t pt-4"><h3 className="mb-3 text-xs font-bold uppercase tracking-widest text-slate-400">แหล่งอ้างอิง</h3>{tafsir.citations.map((citation: RecordValue, index: number) => <div key={index} className="mb-3 rounded-lg bg-slate-50 p-3 text-xs leading-5"><strong>{citation.work_title ?? citation.source_id ?? 'แหล่งข้อมูล'}</strong><br />{citation.author ?? ''}{citation.edition ? ` · ${citation.edition}` : ''}{citation.page ? ` · หน้า ${citation.page}` : ''}</div>)}</div> : <p className="mt-6 border-t pt-4 text-xs italic text-slate-500">ไม่มีแหล่งอ้างอิงแนบมากับคำอธิบายนี้</p>}{Array.isArray(tafsir.limitations) && tafsir.limitations.length > 0 && <div className="mt-5 rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-800"><strong>ข้อจำกัด</strong><br />{tafsir.limitations.join(' ')}</div>}</div>}</div></aside>
+      if (typeof passage.thai_translation === 'string' && passage.thai_translation.trim()) return;
+      if (passage.translation_allowed !== true) {
+        setTranslationError(stringOf(passage, 'translation_block_reason') || 'แหล่งข้อมูลนี้ยังไม่ได้รับอนุมัติสำหรับการแปลด้วย AI');
+        return;
+      }
+
+      setTafsirStatus('loading');
+      try {
+        const translationResponse = passage.development_mode === true
+          ? await apiClient.translateDevelopmentTafsirPassage(surah, ayah, agent)
+          : await apiClient.translateTafsirPassage(stringOf(passage, 'id'));
+        const translationData = isRecord(translationResponse) && isRecord(translationResponse.data)
+          ? translationResponse.data
+          : null;
+        const translatedText = stringOf(translationData, 'thai_translation');
+        if (!translatedText) throw new Error('OpenAI ไม่ได้ส่งคำแปลกลับมา');
+        setTafsir({ ...passage, thai_translation: translatedText });
+        setTafsirStatus('success');
+      } catch (translationFailure) {
+        setTranslationError(translationFailure instanceof Error ? translationFailure.message : 'แปลตัฟซีรไม่สำเร็จ');
+        setTafsirStatus('success');
+      }
+    } catch (passageFailure) {
+      setError(passageFailure instanceof Error ? passageFailure.message : 'โหลดตัฟซีรไม่สำเร็จ');
+      setTafsirStatus('error');
+    }
+  };
+  const selectAgent = (agentId: string) => {
+    setAgent(agentId);
+    setTafsir(null);
+    setTafsirStatus('idle');
+    setError('');
+    setTranslationError('');
+  };
+  const tafsirSource = isRecord(tafsir?.source) ? tafsir.source : null;
+  const hasThaiTranslation = typeof tafsir?.thai_translation === 'string' && tafsir.thai_translation.length > 0;
+  const selectedArabic = textOf(ayahData) || textOf(ayahs.find((item) => numberOf(item, 0) === ayah));
+
+  const tafsirPanel = (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="border-b border-slate-200 px-5 py-4">
+        <div className="mb-4 flex items-center gap-6 border-b border-slate-100 text-sm">
+          <button className="border-b-2 border-[#C9A227] pb-3 font-semibold text-[#073B32]">ตัฟซีร</button>
+          <button disabled title="ยังไม่เปิดใช้งาน" className="cursor-not-allowed pb-3 text-slate-400">เทียบทัศนะ</button>
+          <button disabled title="ยังไม่เปิดใช้งาน" className="cursor-not-allowed pb-3 text-slate-400">ทบทวน</button>
+        </div>
+        <p className="text-xs text-slate-500">บริบทที่เลือกไว้: {surahName} {surah}:{ayah}</p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {agents.map((item) => <button key={item.id} onClick={() => selectAgent(item.id)} disabled={!item.available} title={item.available ? undefined : 'ยังไม่มีข้อมูลตัฟซีรชุดนี้ในฐานข้อมูล'} className={`rounded-full border px-3 py-2 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${agent === item.id ? 'border-[#0E5E4F] bg-[#0E5E4F] text-white' : 'border-[#d6e0dc] bg-white text-slate-700 hover:border-[#0E5E4F]'}`}>{item.label}</button>)}
+        </div>
+        <div className="mt-4 flex items-center justify-between gap-2">
+          <h2 className="text-sm font-bold text-slate-800">{stringOf(tafsirSource, 'title') || `${agents.find((item) => item.id === agent)?.label} Tafsir`}</h2>
+          {tafsir && <EvidenceBadge status={stringOf(tafsir, 'evidence_status')} />}
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-5">
+        {tafsirStatus === 'idle' && <div className="rounded-xl border border-slate-200 p-4 text-sm leading-7 text-slate-500">เลือกแหล่งตัฟซีร แล้วกดปุ่มเพื่อโหลดต้นฉบับและแปลเป็นภาษาไทย</div>}
+        {tafsirStatus === 'loading' && <div className="animate-pulse rounded-xl border border-slate-200 p-4"><div className="h-3 w-2/3 rounded bg-slate-200" /><div className="mt-4 h-3 rounded bg-slate-100" /><div className="mt-2 h-3 w-4/5 rounded bg-slate-100" /><div className="mt-2 h-3 w-3/5 rounded bg-slate-100" /></div>}
+        {tafsirStatus === 'error' && <div className="rounded-xl bg-amber-50 p-4 text-sm leading-7 text-amber-800">{error || 'โหลดตัฟซีรไม่สำเร็จ กรุณาลองใหม่'}</div>}
+        {tafsir && tafsirStatus === 'success' && <div className="space-y-4">
+          <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-xs font-bold text-slate-700">{stringOf(tafsirSource, 'scholar')}</h3>
+              <span className="text-[10px] text-slate-400">{tafsir.development_mode === true ? 'โหมดพัฒนา · ไฟล์ JSON ในเครื่อง' : 'ต้นฉบับจากฐานข้อมูล'}</span>
+            </div>
+            <p className="whitespace-pre-wrap text-sm leading-8 text-slate-700">{stringOf(tafsir, 'thai_translation') || 'ยังไม่มีคำแปลภาษาไทย'}</p>
+            {hasThaiTranslation && <p className="mt-3 border-t border-slate-100 pt-3 text-[10px] leading-5 text-slate-400">แปลด้วย OpenAI เพื่อช่วยในการศึกษา ควรตรวจเทียบกับต้นฉบับภาษาอาหรับ</p>}
+            {translationError && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-800">{translationError}</p>}
+          </div>
+          <details className="rounded-xl border border-slate-200 bg-white p-4">
+            <summary className="cursor-pointer text-xs font-semibold text-slate-600">ดูต้นฉบับภาษาอาหรับ</summary>
+            <p dir="rtl" lang="ar" className={`${amiriQuran.className} mt-4 whitespace-pre-wrap text-right text-xl leading-[2.1] text-slate-800`}>{stringOf(tafsir, 'arabic_text')}</p>
+          </details>
+          {tafsirSource && <div className="text-[10px] leading-5 text-slate-400">
+            <span>{stringOf(tafsirSource, 'title')}</span>
+            {stringOf(tafsirSource, 'edition') && <span> · {stringOf(tafsirSource, 'edition')}</span>}
+            {tafsirSource.page != null && <span> · หน้า {String(tafsirSource.page)}</span>}
+            {stringOf(tafsirSource, 'url') && <a className="ml-1 underline" href={stringOf(tafsirSource, 'url')} target="_blank" rel="noreferrer">แหล่งที่มา</a>}
+          </div>}
+        </div>}
+      </div>
+      <div className="border-t border-slate-100 p-4">
+        <button onClick={loadTafsir} disabled={tafsirStatus === 'loading'} className="w-full rounded-xl bg-[#0E5E4F] px-4 py-3 text-sm font-semibold text-white hover:bg-[#073B32] disabled:cursor-not-allowed disabled:opacity-50">{tafsirStatus === 'loading' ? 'กำลังโหลด/แปล...' : 'แสดงตัฟซีรและแปลเป็นไทย'}</button>
+      </div>
     </div>
-  </main>;
+  );
+
+  return (
+    <main className={`${notoSansThai.className} flex min-h-dvh flex-col bg-[#F5F7F6] text-[#1E293B]`}>
+      <header className="z-20 flex h-[68px] shrink-0 items-center justify-between gap-4 border-b border-[#dce4e1] bg-white px-4 lg:h-[76px] lg:px-7">
+        <div className="flex min-w-0 items-center gap-3 lg:min-w-[190px]">
+          <button aria-label="เปิดเมนูซูเราะฮ์" className="rounded-lg p-2 text-[#073B32] hover:bg-slate-50 lg:hidden"><Icon name="menu" /></button>
+          <button onClick={() => router.push('/')} className="hidden items-center gap-2.5 font-bold tracking-tight text-[#073B32] lg:flex"><BrandMark />QURAN AI</button>
+          <div className="text-center lg:hidden"><p className="text-sm font-bold text-[#073B32]">{surahName}</p><p className="text-[10px] text-slate-500">มักกียะฮ์ · {ayahs.length || '—'} อายะฮ์</p></div>
+        </div>
+        <label className="hidden max-w-xl flex-1 items-center gap-3 rounded-xl border border-[#cbd9d4] bg-[#F5F7F6] px-4 py-2.5 text-slate-500 md:flex">
+          <Icon name="search" className="h-4 w-4 shrink-0" />
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ค้นหาอายะฮ์ เช่น 2:255 หรือคำสำคัญ" className="w-full bg-transparent text-sm outline-none placeholder:text-slate-500" />
+        </label>
+        <div className="flex min-w-0 justify-end gap-3 sm:min-w-[190px]">
+          <span className="hidden items-center rounded-full border border-[#efdfaa] bg-[#FEF9E7] px-4 py-2 text-xs font-semibold text-[#80640e] sm:inline-flex">สตรีค [N] วัน</span>
+          <button aria-label="โปรไฟล์" className="grid h-10 w-10 place-items-center rounded-full bg-[#E6F4F1] text-sm font-bold text-[#0E5E4F]">ผ</button>
+        </div>
+      </header>
+
+      <div className="grid min-h-0 flex-1 lg:grid-cols-[260px_minmax(0,1fr)_420px]">
+        <aside className="hidden min-h-0 overflow-y-auto border-r border-[#dce4e1] bg-white p-5 lg:block">
+          <h2 className="mb-4 px-2 text-xs font-bold tracking-wide text-slate-500">ซูเราะฮ์</h2>
+          <nav className="space-y-1">
+            {surahStatus === 'loading' && <p className="px-3 py-2 text-sm text-slate-400">กำลังโหลด...</p>}
+            {surahStatus === 'error' && <p className="px-3 py-2 text-sm text-red-600">โหลดสารบัญไม่สำเร็จ</p>}
+            {surahs.map((item) => {
+              const id = numberOf(item, 0);
+              const name = stringOf(item, 'name_th', 'transliteration', 'name_simple', 'name') || `ซูเราะฮ์ ${id}`;
+              return <button key={id} onClick={() => selectSurah(id)} className={`flex w-full items-center gap-2 rounded-xl px-3 py-3 text-left text-sm transition ${id === surah ? 'bg-[#E6F4F1] font-semibold text-[#073B32]' : 'text-slate-700 hover:bg-slate-50'}`}><span className="text-xs text-slate-400">{id} ·</span>{name}</button>;
+            })}
+          </nav>
+          <div className="my-5 border-t border-slate-200" />
+          <h2 className="mb-2 px-2 text-xs font-bold tracking-wide text-slate-500">คลังของฉัน</h2>
+          {['บุ๊กมาร์ก', 'แฟลชการ์ด', 'คอร์สเรียน', 'เอกสาร PDF'].map((item) => <button disabled key={item} title="ยังไม่เปิดใช้งาน" className="block w-full cursor-not-allowed rounded-lg px-3 py-3 text-left text-sm text-slate-400">{item}</button>)}
+        </aside>
+
+        <section className="min-h-0 overflow-y-auto px-4 pb-[24rem] pt-5 md:px-8 md:pb-10 lg:px-6 lg:pt-7 xl:px-9">
+          <div className="mx-auto max-w-4xl">
+            <div className="mb-5 flex items-center justify-between gap-4">
+              <div><h1 className="text-xl font-bold text-[#073B32] md:text-2xl">{surahName}</h1><p className="mt-1 text-sm text-slate-500">มักกียะฮ์ · {ayahs.length || '—'} อายะฮ์</p></div>
+              <button disabled title="เสียงยังไม่พร้อมใช้งาน" className="hidden items-center gap-3 rounded-xl border border-[#d6e0dc] bg-white px-3 py-2 text-xs text-slate-400 sm:flex"><span className="grid h-9 w-9 place-items-center rounded-lg bg-[#0E5E4F] text-white"><Icon name="play" /></span>ผู้อ่าน: [เลือกผู้อ่าน]</button>
+            </div>
+            <label className="mb-4 flex items-center gap-3 rounded-xl border border-[#d6e0dc] bg-white px-4 py-3 text-slate-500 md:hidden">
+              <Icon name="search" className="h-4 w-4 shrink-0" />
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ค้นหาอายะฮ์ หรือคำสำคัญ" className="w-full bg-transparent text-sm outline-none placeholder:text-slate-500" />
+            </label>
+
+            {contentStatus === 'loading' && <div className="space-y-4" aria-label="กำลังโหลดอายะฮ์"><div className="h-48 animate-pulse rounded-2xl bg-slate-200" /><div className="h-48 animate-pulse rounded-2xl bg-slate-200" /></div>}
+            {contentStatus === 'error' && <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700">{error}<button onClick={() => selectAyah(ayah)} className="ml-3 underline">ลองใหม่</button></div>}
+            {contentStatus === 'empty' && <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">ไม่พบข้อมูลอายะฮ์นี้</div>}
+            {contentStatus === 'success' && (
+              <div className="space-y-3">
+                {filteredAyahs.map((item) => {
+                  const id = numberOf(item, 0);
+                  const selected = id === ayah;
+                  const verse = selected ? selectedArabic : textOf(item);
+                  return <button key={id} onClick={() => selectAyah(id)} className={`block w-full rounded-2xl border p-5 text-left transition md:p-6 ${selected ? 'border-[#0E5E4F] bg-[#E6F4F1]' : 'border-[#dce4e1] bg-white hover:border-[#9bbdb3]'}`}>
+                    <div className="flex items-center justify-between text-xs font-semibold text-slate-500"><span>{surah}:{id}</span>{selected && <span className="text-[#0E5E4F]">เลือกแล้ว</span>}</div>
+                    <p className={`${amiriQuran.className} mt-5 text-right text-[2rem] leading-[1.9] text-slate-900 sm:text-4xl`} dir="rtl" lang="ar">{verse || 'ไม่มีข้อความอาหรับจากแหล่งข้อมูล'}</p>
+                    {selected ? translation
+                      ? <p className="mt-4 text-sm leading-6 text-slate-600">{translation}</p>
+                      : <p className="mt-4 text-sm leading-6 text-slate-400">ยังไม่มีคำแปลภาษาไทยสำหรับอายะฮ์นี้</p>
+                      : <p className="mt-4 text-xs text-slate-400">เลือกอายะฮ์เพื่อดูคำแปลและตัฟซีร</p>}
+                  </button>;
+                })}
+                {filteredAyahs.length === 0 && <p className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-500">ไม่พบอายะฮ์ที่ตรงกับคำค้น</p>}
+              </div>
+            )}
+          </div>
+        </section>
+
+        <aside className="hidden min-h-0 flex-col border-l border-[#dce4e1] bg-white lg:flex">{tafsirPanel}</aside>
+      </div>
+
+      <div className={`fixed inset-x-0 bottom-[64px] z-20 flex max-h-[48dvh] flex-col rounded-t-[22px] border-t border-slate-200 bg-white shadow-[0_-12px_36px_rgba(21,44,37,.12)] transition-transform lg:hidden ${mobilePanelOpen ? 'translate-y-0' : 'translate-y-[calc(100%-24px)]'}`}>
+        <button aria-label={mobilePanelOpen ? 'ย่อแผงตัฟซีร' : 'ขยายแผงตัฟซีร'} onClick={() => setMobilePanelOpen(!mobilePanelOpen)} className="flex h-7 shrink-0 items-center justify-center"><span className="h-1 w-10 rounded-full bg-slate-300" /></button>
+        {tafsirPanel}
+      </div>
+
+      <nav className="fixed inset-x-0 bottom-0 z-30 grid h-16 grid-cols-4 border-t border-[#dce4e1] bg-white lg:hidden">
+        <button onClick={() => setMobilePanelOpen(false)} className="flex flex-col items-center justify-center gap-0.5 text-[#0E5E4F]"><Icon name="book" className="h-5 w-5" /><span className="text-[10px] font-semibold">อ่าน</span></button>
+        <button onClick={() => setMobilePanelOpen(true)} className="flex flex-col items-center justify-center gap-0.5 text-slate-500"><Icon name="chat" className="h-5 w-5" /><span className="text-[10px]">ตัฟซีร</span></button>
+        <button disabled title="ยังไม่เปิดใช้งาน" className="flex cursor-not-allowed flex-col items-center justify-center gap-0.5 text-slate-300"><Icon name="cards" className="h-5 w-5" /><span className="text-[10px]">ทบทวน</span></button>
+        <button disabled title="ยังไม่เปิดใช้งาน" className="flex cursor-not-allowed flex-col items-center justify-center gap-0.5 text-slate-300"><Icon name="user" className="h-5 w-5" /><span className="text-[10px]">ฉัน</span></button>
+      </nav>
+    </main>
+  );
 }

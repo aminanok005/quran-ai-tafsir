@@ -1,0 +1,410 @@
+"""Tafsir passage lookup and Thai translation for development and database sources."""
+
+import logging
+import time
+from threading import Lock
+from typing import Any, Dict
+from uuid import NAMESPACE_URL, UUID, uuid5
+
+import httpx
+from fastapi import APIRouter, HTTPException, Request
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
+
+from ..config import settings
+from ..services.tafsir_translation import (
+    TranslationProviderError,
+    translate_tafsir_to_thai,
+)
+from ..services.tafsir_json import (
+    TAFSIR_JSON_SOURCES,
+    TafsirJsonDataError,
+    get_tafsir_json_text,
+    split_tafsir_text,
+)
+
+router = APIRouter(prefix="/tafsir", tags=["Tafsir"])
+logger = logging.getLogger(__name__)
+
+BOOK_IDS = {
+    "ibn_kathir": "tafsir_ibn_kathir",
+    "al_tabari": "jami_al_bayan",
+    "al_qurtubi": "jami_ahkam",
+    "al_saadi": "taysir_karim",
+}
+
+_engine: Engine | None = None
+_rate_lock = Lock()
+_translation_requests: Dict[str, list[float]] = {}
+_development_translations: Dict[str, str] = {}
+_development_translation_lock = Lock()
+_TRANSLATION_RATE_LIMIT = 5
+_TRANSLATION_RATE_WINDOW_SECONDS = 60
+_MAX_DEVELOPMENT_SOURCE_LENGTH = 120_000
+
+
+def get_engine() -> Engine:
+    global _engine
+    if _engine is None:
+        _engine = create_engine(settings.database_url, pool_pre_ping=True)
+    return _engine
+
+
+def _translation_is_allowed(passage: Dict[str, Any]) -> bool:
+    return (
+        passage["permission_status"] == "approved"
+        and passage["book_verification_status"] == "verified"
+        and passage["registered_permission_status"] == "approved"
+        and passage["registered_verification_status"] == "verified"
+        and bool(passage["verification_evidence"])
+        and bool(passage["license"])
+        and bool(passage["source_url"])
+    )
+
+
+def _get_passage(engine: Engine, surah: int, ayah: int, agent_type: str) -> Dict[str, Any] | None:
+    book_id = BOOK_IDS.get(agent_type)
+    if book_id is None:
+        return None
+
+    statement = text("""
+        SELECT
+            p.id::text AS passage_id,
+            p.surah_number,
+            p.ayah_start,
+            p.ayah_end,
+            p.arabic_text,
+            p.thai_translation,
+            p.volume,
+            p.page,
+            p.edition,
+            p.source_url AS passage_source_url,
+            p.verification_status::text AS evidence_status,
+            b.book_id,
+            b.title AS book_title,
+            b.title_ar AS book_title_ar,
+            COALESCE(sp.license, b.license) AS license,
+            b.source_url AS book_source_url,
+            b.permission_status::text AS permission_status,
+            b.verification_status::text AS book_verification_status,
+            COALESCE(sp.verification_evidence, b.verification_evidence) AS verification_evidence,
+            COALESCE(sp.source_url, b.source_url, p.source_url) AS source_url,
+            s.name AS scholar_name,
+            sp.permission_status::text AS registered_permission_status,
+            sp.verification_status::text AS registered_verification_status
+        FROM tafsir_passages AS p
+        JOIN tafsir_books AS b ON b.id = p.book_id
+        JOIN scholars AS s ON s.id = b.scholar_id
+        LEFT JOIN source_permissions AS sp ON sp.source_id = b.book_id
+        WHERE p.surah_number = :surah
+          AND p.ayah_start <= :ayah
+          AND p.ayah_end >= :ayah
+          AND b.book_id = :book_id
+        ORDER BY p.created_at DESC
+        LIMIT 1
+    """)
+    with engine.connect() as connection:
+        row = connection.execute(
+            statement,
+            {"surah": surah, "ayah": ayah, "book_id": book_id},
+        ).mappings().first()
+    return dict(row) if row else None
+
+
+def _public_passage(passage: Dict[str, Any]) -> Dict[str, Any]:
+    translation_allowed = _translation_is_allowed(passage)
+    return {
+        "id": passage["passage_id"],
+        "surah_number": passage["surah_number"],
+        "ayah_start": passage["ayah_start"],
+        "ayah_end": passage["ayah_end"],
+        "arabic_text": passage["arabic_text"],
+        "thai_translation": passage["thai_translation"] if translation_allowed else None,
+        "evidence_status": str(passage["evidence_status"]).upper(),
+        "translation_allowed": translation_allowed,
+        "translation_block_reason": (
+            None if translation_allowed else
+            "การแปลด้วย AI ถูกระงับจนกว่าสิทธิ์ ใบอนุญาต และหลักฐานการตรวจสอบแหล่งข้อมูลจะได้รับอนุมัติ"
+        ),
+        "source": {
+            "book_id": passage["book_id"],
+            "title": passage["book_title"],
+            "title_ar": passage["book_title_ar"],
+            "scholar": passage["scholar_name"],
+            "edition": passage["edition"],
+            "volume": passage["volume"],
+            "page": passage["page"],
+            "url": passage["passage_source_url"] or passage["book_source_url"],
+            "permission_status": passage["permission_status"],
+        },
+    }
+
+
+def _enforce_translation_rate_limit(request: Request) -> None:
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    cutoff = now - _TRANSLATION_RATE_WINDOW_SECONDS
+    with _rate_lock:
+        for ip in list(_translation_requests):
+            recent = [item for item in _translation_requests[ip] if item > cutoff]
+            if recent:
+                _translation_requests[ip] = recent
+            else:
+                del _translation_requests[ip]
+        recent = _translation_requests.setdefault(client_ip, [])
+        if len(recent) >= _TRANSLATION_RATE_LIMIT:
+            raise HTTPException(status_code=429, detail="Translation request limit reached; try again later")
+        recent.append(now)
+
+
+def _translation_provider_http_exception(error: httpx.HTTPStatusError) -> HTTPException:
+    if error.response.status_code != 429:
+        return HTTPException(status_code=502, detail="OpenAI could not translate this tafsir passage")
+
+    try:
+        payload = error.response.json()
+    except ValueError:
+        payload = {}
+    provider_error = payload.get("error", {}) if isinstance(payload, dict) else {}
+    error_type = provider_error.get("type") if isinstance(provider_error, dict) else None
+    error_code = provider_error.get("code") if isinstance(provider_error, dict) else None
+    if error_type == "insufficient_quota" or error_code in {
+        "insufficient_quota",
+        "credit_balance_exhausted",
+    }:
+        return HTTPException(
+            status_code=429,
+            detail=(
+                "OpenAI แจ้งว่าเครดิตหรือโควตาการใช้งานหมด "
+                "กรุณาเติมเครดิตหรือเพิ่มวงเงินในบัญชี OpenAI ที่ผูกกับ API key "
+                "หรือเปลี่ยนไปใช้ผู้ให้บริการที่มีโควตาพร้อมใช้งาน"
+            ),
+        )
+    return HTTPException(
+        status_code=429,
+        detail="OpenAI จำกัดจำนวนคำขอชั่วคราว กรุณารอสักครู่แล้วลองใหม่",
+    )
+
+
+def _development_passage(surah: int, ayah: int, agent_type: str) -> Dict[str, Any] | None:
+    source = TAFSIR_JSON_SOURCES.get(agent_type)
+    if source is None:
+        return None
+    try:
+        arabic_text = get_tafsir_json_text(agent_type, surah, ayah)
+    except TafsirJsonDataError as error:
+        logger.error("Local tafsir JSON source is unavailable for %s", agent_type)
+        raise HTTPException(status_code=503, detail="Local tafsir source is unavailable") from error
+    if not arabic_text:
+        return None
+
+    passage_id = str(uuid5(NAMESPACE_URL, f"quran-ai-dev:{agent_type}:{surah}:{ayah}"))
+    cache_key = f"{agent_type}:{surah}:{ayah}"
+    return {
+        "id": passage_id,
+        "surah_number": surah,
+        "ayah_start": ayah,
+        "ayah_end": ayah,
+        "arabic_text": arabic_text,
+        "thai_translation": _development_translations.get(cache_key),
+        "evidence_status": "UNVERIFIED",
+        "translation_allowed": True,
+        "translation_block_reason": None,
+        "development_mode": True,
+        "source": {
+            "book_id": source["book_id"],
+            "title": source["title"],
+            "title_ar": source["title_ar"],
+            "scholar": source["scholar"],
+            "edition": source["edition"],
+            "volume": None,
+            "page": None,
+            "url": source["url"],
+            "permission_status": "development-only",
+        },
+    }
+
+
+async def _translate_development_passage(source_text: str) -> str:
+    if not all((
+        settings.llm_provider,
+        settings.llm_api_base_url,
+        settings.llm_api_key,
+        settings.llm_model,
+    )):
+        raise HTTPException(status_code=503, detail="LLM translation is not configured on the server")
+    if len(source_text) > _MAX_DEVELOPMENT_SOURCE_LENGTH:
+        raise HTTPException(status_code=413, detail="This tafsir passage is too long to translate")
+
+    translations = []
+    for chunk in split_tafsir_text(source_text):
+        translations.append(await translate_tafsir_to_thai(
+            chunk,
+            api_key=settings.llm_api_key,
+            model=settings.llm_model,
+            base_url=settings.llm_api_base_url,
+        ))
+    return "\n\n".join(translations)
+
+
+@router.get("/passages/{surah}/{ayah}", response_model=Dict[str, Any])
+async def get_tafsir_passage(surah: int, ayah: int, agent_type: str):
+    """Return one source passage for the selected ayah and scholar."""
+    if not 1 <= surah <= 114 or not 1 <= ayah <= 286:
+        raise HTTPException(status_code=422, detail="Invalid surah or ayah number")
+    if agent_type not in BOOK_IDS:
+        raise HTTPException(status_code=404, detail="No imported tafsir source is available for this scholar")
+
+    if settings.environment.lower() == "development":
+        passage = _development_passage(surah, ayah, agent_type)
+        if passage is None:
+            raise HTTPException(status_code=404, detail="No tafsir passage was found for this ayah")
+        return {"success": True, "data": passage}
+
+    passage = _get_passage(get_engine(), surah, ayah, agent_type)
+    if passage is None:
+        raise HTTPException(status_code=404, detail="No tafsir passage was found for this ayah")
+    return {"success": True, "data": _public_passage(passage)}
+
+
+@router.post("/passages/dev/{surah}/{ayah}/translate", response_model=Dict[str, Any])
+async def translate_development_passage(surah: int, ayah: int, agent_type: str, request: Request):
+    """Translate only the selected local JSON passage; results remain in process memory."""
+    if settings.environment.lower() != "development":
+        raise HTTPException(status_code=404, detail="Development-only tafsir translation is unavailable")
+    if not 1 <= surah <= 114 or not 1 <= ayah <= 286:
+        raise HTTPException(status_code=422, detail="Invalid surah or ayah number")
+    if agent_type not in TAFSIR_JSON_SOURCES:
+        raise HTTPException(status_code=404, detail="No local tafsir source is available for this scholar")
+
+    cache_key = f"{agent_type}:{surah}:{ayah}"
+    cached = _development_translations.get(cache_key)
+    if cached:
+        return {"success": True, "data": {"thai_translation": cached, "cached": True}}
+
+    passage = _development_passage(surah, ayah, agent_type)
+    if passage is None:
+        raise HTTPException(status_code=404, detail="No tafsir passage was found for this ayah")
+    _enforce_translation_rate_limit(request)
+
+    try:
+        translation = await _translate_development_passage(passage["arabic_text"])
+    except httpx.TimeoutException as error:
+        logger.warning("OpenAI development tafsir translation timed out for %s", cache_key)
+        raise HTTPException(status_code=504, detail="Thai translation timed out; please try again") from error
+    except httpx.HTTPStatusError as error:
+        logger.error("OpenAI returned HTTP %s for development tafsir %s", error.response.status_code, cache_key)
+        raise _translation_provider_http_exception(error) from error
+    except (httpx.RequestError, TranslationProviderError) as error:
+        logger.error("OpenAI translation failed for development tafsir %s: %s", cache_key, type(error).__name__)
+        raise HTTPException(status_code=502, detail="OpenAI could not translate this tafsir passage") from error
+
+    with _development_translation_lock:
+        existing_translation = _development_translations.get(cache_key)
+        if existing_translation:
+            return {
+                "success": True,
+                "data": {"thai_translation": existing_translation, "cached": True},
+            }
+        _development_translations[cache_key] = translation
+    return {
+        "success": True,
+        "data": {
+            "thai_translation": translation,
+            "cached": False,
+        },
+    }
+
+
+@router.post("/passages/{passage_id}/translate", response_model=Dict[str, Any])
+async def translate_passage(passage_id: UUID, request: Request):
+    """Translate an approved source passage to Thai and cache it in the database."""
+    _enforce_translation_rate_limit(request)
+    engine = get_engine()
+    statement = text("""
+        SELECT
+            p.id::text AS passage_id,
+            p.arabic_text,
+            p.thai_translation,
+            p.permission_status::text AS permission_status,
+            p.book_verification_status::text AS book_verification_status,
+            p.registered_permission_status::text AS registered_permission_status,
+            p.registered_verification_status::text AS registered_verification_status,
+            p.verification_evidence,
+            p.license,
+            p.source_url
+        FROM (
+            SELECT
+                p.id,
+                p.arabic_text,
+                p.thai_translation,
+                b.permission_status,
+                b.verification_status AS book_verification_status,
+                sp.permission_status AS registered_permission_status,
+                sp.verification_status AS registered_verification_status,
+                COALESCE(sp.verification_evidence, b.verification_evidence) AS verification_evidence,
+                COALESCE(sp.license, b.license) AS license,
+                COALESCE(sp.source_url, b.source_url, p.source_url) AS source_url
+            FROM tafsir_passages AS p
+            JOIN tafsir_books AS b ON b.id = p.book_id
+            LEFT JOIN source_permissions AS sp ON sp.source_id = b.book_id
+            WHERE p.id = :passage_id
+        ) AS p
+    """)
+    with engine.connect() as connection:
+        row = connection.execute(statement, {"passage_id": str(passage_id)}).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Tafsir passage not found")
+
+    passage = dict(row)
+    if not _translation_is_allowed(passage):
+        raise HTTPException(status_code=403, detail="Source rights and verification must be approved before translation")
+    if passage["thai_translation"]:
+        return {"success": True, "data": {"thai_translation": passage["thai_translation"], "cached": True}}
+    if not all((
+        settings.llm_provider,
+        settings.llm_api_base_url,
+        settings.llm_api_key,
+        settings.llm_model,
+    )):
+        raise HTTPException(status_code=503, detail="LLM translation is not configured on the server")
+    if len(passage["arabic_text"]) > 30000:
+        raise HTTPException(status_code=413, detail="This tafsir passage is too long to translate in one request")
+
+    try:
+        translation = await translate_tafsir_to_thai(
+            passage["arabic_text"],
+            api_key=settings.llm_api_key,
+            model=settings.llm_model,
+            base_url=settings.llm_api_base_url,
+        )
+    except httpx.TimeoutException as error:
+        logger.warning("OpenAI tafsir translation timed out for passage %s", passage_id)
+        raise HTTPException(status_code=504, detail="Thai translation timed out; please try again") from error
+    except httpx.HTTPStatusError as error:
+        logger.error("OpenAI returned HTTP %s for tafsir passage %s", error.response.status_code, passage_id)
+        raise _translation_provider_http_exception(error) from error
+    except (httpx.RequestError, TranslationProviderError) as error:
+        logger.error("OpenAI translation failed for tafsir passage %s: %s", passage_id, type(error).__name__)
+        raise HTTPException(status_code=502, detail="OpenAI could not translate this tafsir passage") from error
+
+    update = text("""
+        UPDATE tafsir_passages
+        SET thai_translation = :translation, updated_at = CURRENT_TIMESTAMP
+        WHERE id = :passage_id
+          AND (thai_translation IS NULL OR btrim(thai_translation) = '')
+        RETURNING thai_translation
+    """)
+    with engine.begin() as connection:
+        result = connection.execute(
+            update,
+            {"passage_id": str(passage_id), "translation": translation},
+        ).scalar_one_or_none()
+        if result is None:
+            result = connection.execute(
+                text("SELECT thai_translation FROM tafsir_passages WHERE id = :passage_id"),
+                {"passage_id": str(passage_id)},
+            ).scalar_one()
+            return {"success": True, "data": {"thai_translation": result, "cached": True}}
+
+    return {"success": True, "data": {"thai_translation": result, "cached": False}}

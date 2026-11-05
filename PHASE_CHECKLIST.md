@@ -1,7 +1,7 @@
 # QURAN AI - Phase Checklist & Progress Tracker
 
 **Last Updated:** 2026-11-05  
-**Current Phase:** Phase 2 → Phase 3 Transition
+**Current Phase:** Phase 2 blockers → Phase 3 integration
 
 ---
 
@@ -9,18 +9,18 @@
 
 | Phase | Status | Completion | Blockers |
 |-------|--------|------------|----------|
-| **Phase 1: Foundation & Unified Reader** | ✅ **COMPLETE** | 100% | None |
-| **Phase 2: Knowledge Base & Hybrid RAG** | 🔄 **IN PROGRESS** | 75% | Database setup |
-| **Phase 3: Multi-Agent Tafsir Engine** | ⏳ **READY TO START** | 60% | Phase 2 completion |
+| **Phase 1: Foundation & Unified Reader** | ✅ **IMPLEMENTED** | — | End-to-end integration not verified |
+| **Phase 2: Knowledge Base & Hybrid RAG** | 🔄 **IN PROGRESS** | — | Source review and disposable-database validation pending |
+| **Phase 3: Multi-Agent Tafsir Engine** | 🔄 **IMPLEMENTED; VALIDATION PENDING** | — | Data-backed integration and runtime validation |
 | **Phase 4: Gamified Learning SaaS** | ⏸️ **PENDING** | 0% | Phase 3 completion |
 | **Phase 5: AI Active Recall Suite** | ⏸️ **PENDING** | 0% | Phase 4 completion |
 | **Phase 6: Billing, Security & Production** | ⏸️ **PENDING** | 0% | Phase 5 completion |
 
 ---
 
-## ✅ **PHASE 1: Foundation & Unified Reader - COMPLETE**
+## ✅ **PHASE 1: Foundation & Unified Reader - IMPLEMENTED**
 
-### Completed Items:
+### Implemented Items:
 - [x] Next.js 14+ project structure with App Router
 - [x] Three-column responsive layout (260px | flex | 420px)
 - [x] Thai-first UI with Arabic RTL support
@@ -29,7 +29,7 @@
 - [x] Thai translation (King Fahd Complex certified)
 - [x] English and Urdu translations
 - [x] Word-by-word morphology and transliteration
-- [x] Audio recitation support (Mishary Rashid, Al-Husary)
+- [ ] Audio playback (reader action is currently unavailable/disabled)
 - [x] Database models (PostgreSQL + pgvector)
 - [x] API contracts defined (OpenAPI)
 - [x] Configuration management
@@ -43,39 +43,42 @@
 
 ---
 
-## 🔄 **PHASE 2: Knowledge Base & Hybrid RAG - IN PROGRESS (75%)**
+## 🔄 **PHASE 2: Knowledge Base & Hybrid RAG - IN PROGRESS**
 
-### Completed Items:
-- [x] PostgreSQL 16 + pgvector extension (cluster running on port 5434)
-- [x] Database schema design (12 tables with relationships)
+### Implemented Items:
+- [x] PostgreSQL + pgvector schema and setup materials exist
+- [x] Database model/schema design exists (table count still needs migration verification)
 - [x] Shamela ingestion pipeline structure
 - [x] Tafsir citation schemas
 - [x] Evidence classification enums (VERIFIED, SOURCE-ATTRIBUTED, etc.)
 - [x] Vector search indexes (HNSW + FTS)
 - [x] Hybrid RAG architecture design
 
-### In Progress:
-- [ ] **Database initialization** - PostgreSQL authentication setup needed
-- [ ] **Classical tafsir data loading** (100.7MB / 4 sources)
-- [ ] **Quran data seeding** (6,236 verses from Quran Foundation API)
-- [ ] Vector search testing and optimization
+### Blocked / Not Yet Verified:
+- [x] **Canonical migration source review** - indexes follow their tables and methodology apostrophes are valid SQL escaping
+- [ ] **Canonical migration runtime validation** - not run against PostgreSQL
+- [x] **Quran seeder syntax/schema fixes** - corrected to insert canonical `quran_ayahs` columns and all 6,236 verses; unit tests pass
+- [ ] **Tafsir loader runtime validation** - SQLAlchemy/PostgreSQL runtime not available in this environment
+- [ ] **Database initialization and data loading** - no database connection, migration, or ingestion was performed; live database state is unknown
+- [ ] **Vector search testing and optimization** - not validated against a populated database
 
-### Files Ready for Execution:
-- `scripts/load_tafsir_data.py` - Load 4 classical tafsir sources (100.7MB)
-- `scripts/seed_quran_data.py` - Seed 6,236 Quran verses
+### Files / Docs Available (review before execution):
+- `scripts/load_tafsir_data.py` - Loads classical tafsir sources only after explicit rights approval and verification
+- `scripts/seed_quran_data.py` - Seeds all 6,236 Quran verses into the canonical table
 - `DATABASE_SETUP_COMMANDS.md` - Copy-paste SQL commands
 - `POSTGRESQL_SETUP_GUIDE.md` - Authentication configuration
 
-### Blocker: PostgreSQL Authentication
-- Cluster running on **port 5434** (not default 5432)
-- Need to set postgres password and configure pg_hba.conf
-- Run: `sudo -u postgres psql -p 5434 -c "ALTER USER postgres WITH PASSWORD 'quran_ai';"`
+### Blockers
+- Tafsir sources are deliberately marked pending/unverified until their rights and provenance are reviewed; the loader refuses them by default.
+- User reports local PostgreSQL does not require a database password; PostgreSQL was observed responding on port 5434. Use the existing local peer/trust authentication and do not add a password to commands or repository files.
+- The OS sudo credential is separate from the database credential. Never store it in this checklist; rotate it if the reported value is real, since it is weak.
+- Migration and data loading remain unrun; validate against a disposable development database, not production.
 
 ---
 
-## 🎯 **PHASE 3: Multi-Agent Tafsir Engine - READY TO START (60%)**
+## 🎯 **PHASE 3: Multi-Agent Tafsir Engine - IMPLEMENTED; VALIDATION PENDING**
 
-### Completed Items:
+### Implemented Items:
 - [x] 6 Tafsir Agent implementations:
   - [x] **Ibn Kathir Agent** - Tafsir bil-Ma'thur, Hadith references
   - [x] **Al-Tabari Agent** - Historical reports, linguistic analysis
@@ -84,17 +87,21 @@
   - [x] **Al-Sa'di Agent** - Clear, accessible explanations
   - [x] **Al-Zuhayli Agent** - Contemporary comparative fiqh
 - [x] Evidence classification system (5 badges)
-- [x] Agent orchestration service
-- [x] Quality gates and validation
-- [x] Comparative disagreement matrix
-- [x] API endpoints for agent execution
+- [x] Agent orchestration, evidence-validation, and API modules exist
+- [x] Development Reader reads a selected tafsir passage from local JSON and translates it on demand without database access or writes; production remains database-backed
+- [ ] End-to-end execution with populated, verified source data
+- [ ] Runtime validation of citations and scholarly disagreement behavior
 
-### Ready to Implement:
-- [ ] Agent orchestration completion (parallel execution)
-- [ ] Evidence validation pipeline
+### Remaining Validation / Implementation:
+- [ ] Confirm orchestration behavior and parallel execution
+- [ ] Complete evidence validation against populated source data
 - [ ] Disagreement matrix UI
 - [ ] Agent response streaming (SSE)
-- [ ] Performance optimization (< 800ms RAG latency)
+- [ ] Measure and optimize RAG latency (< 800ms target)
+
+Development JSON translation is covered by targeted API tests. A live OpenAI
+request was attempted but returned HTTP 429; production database integration
+has not been run.
 
 ### Agent Files Location:
 - `services/api/agents/ibn_kathir_agent.py`
@@ -161,36 +168,20 @@
 
 ---
 
-## 📋 **IMMEDIATE ACTION ITEMS (TODAY)**
+## 📋 **NEXT STEPS (ORDERED)**
 
-### Priority 1: Database Setup (CRITICAL)
-```bash
-# 1. Set PostgreSQL password
-sudo -u postgres psql -p 5434 -c "ALTER USER postgres WITH PASSWORD 'quran_ai';"
+1. **Review and approve source rights/provenance** before marking any tafsir source as approved/verified (or explicitly development-only for development use).
+2. **Validate the migration** against a disposable development PostgreSQL database on the local cluster (port 5434 was observed). Use the local PostgreSQL role/authentication setup with no database password; use `sudo -u postgres` only where OS-level privileges are required. The migration source review found no index-order or enum-quoting defect.
+3. **Run the Quran seeder** with local `DATABASE_URL` and Quran API credentials; confirm all 6,236 ayahs were upserted.
+4. **Load reviewed tafsir sources** with the correct policy mode, then verify counts, provenance statuses, and vector/hybrid search.
+5. **Run API-to-frontend integration and end-to-end checks**; then measure RAG/reader performance and complete security/UX review.
 
-# 2. Create database & enable pgvector
-export PGPASSWORD=quran_ai
-psql -h localhost -p 5434 -U postgres -c "CREATE DATABASE quran_ai OWNER postgres;"
-psql -h localhost -p 5434 -U postgres -d quran_ai -c "CREATE EXTENSION IF NOT EXISTS vector;"
-
-# 3. Run SQL from DATABASE_SETUP_COMMANDS.md (all tables, indexes, triggers, sample data)
-```
-
-### Priority 2: Data Loading
-```bash
-# Load classical tafsir sources (100.7MB)
-python3 scripts/load_tafsir_data.py
-
-# Seed Quran data
-python3 scripts/seed_quran_data.py
-```
-
-### Priority 3: Verify Setup
-```bash
-psql -h localhost -p 5434 -U postgres -d quran_ai -c "SELECT COUNT(*) FROM quran_ayahs;"
-psql -h localhost -p 5434 -U postgres -d quran_ai -c "SELECT COUNT(*) FROM tafsir_passages;"
-psql -h localhost -p 5434 -U postgres -d quran_ai -c "SELECT COUNT(*) FROM scholars;"
-```
+### Validation already recorded
+- [x] Ingestion policy unit tests: 6 passed (`python3 -m unittest -v` in `services/ingestion`)
+- [x] Quran seeder unit tests: 3 passed (`python3 -m unittest -v scripts.test_seed_quran_data`)
+- [x] Frontend build and typecheck passed (per `.agent-work/CLINE_REPORT.md`)
+- [x] Python compile check: seeder, tafsir loader, and migration compile successfully
+- [ ] PostgreSQL migration, live database state, real data loading, and end-to-end API/frontend flow: not verified
 
 ---
 
@@ -198,16 +189,16 @@ psql -h localhost -p 5434 -U postgres -d quran_ai -c "SELECT COUNT(*) FROM schol
 
 | File | Purpose | Status |
 |------|---------|--------|
-| `DATABASE_SETUP_COMMANDS.md` | Complete SQL commands | ✅ Ready |
-| `POSTGRESQL_SETUP_GUIDE.md` | Auth configuration | ✅ Ready |
-| `MANUAL_DATABASE_SETUP.md` | Step-by-step manual | ✅ Ready |
-| `EXECUTE_NOW.sh` | Complete setup script | ✅ Ready |
-| `scripts/load_tafsir_data.py` | Load classical sources | ✅ Ready |
-| `scripts/seed_quran_data.py` | Seed Quran data | ✅ Ready |
-| `services/api/agents/*.py` | 6 agent implementations | ✅ Ready |
-| `services/api/services/agent_orchestrator.py` | Agent orchestration | ✅ Ready |
-| `services/api/services/evidence_validator.py` | Evidence validation | ✅ Ready |
-| `apps/web/` | Next.js 14 frontend | ✅ Ready |
+| `DATABASE_SETUP_COMMANDS.md` | Database setup reference | Available; not validated against current migration |
+| `POSTGRESQL_SETUP_GUIDE.md` | Auth configuration | Available |
+| `MANUAL_DATABASE_SETUP.md` | Step-by-step manual | Available |
+| `EXECUTE_NOW.sh` | Database setup script | Needs review before execution |
+| `scripts/load_tafsir_data.py` | Load classical sources | Schema-aligned; source approval and DB runtime validation pending |
+| `scripts/seed_quran_data.py` | Seed Quran data | Canonical schema mapping; unit tests pass; API/DB runtime pending |
+| `services/api/agents/*.py` | 6 agent implementations | Source files present; runtime validation pending |
+| `services/api/services/agent_orchestrator.py` | Agent orchestration | Source file present; runtime validation pending |
+| `services/api/services/evidence_validator.py` | Evidence validation | Source file present; data-backed validation pending |
+| `apps/web/` | Next.js 14 frontend | Build/typecheck pass recorded |
 
 ---
 
@@ -215,10 +206,10 @@ psql -h localhost -p 5434 -U postgres -d quran_ai -c "SELECT COUNT(*) FROM schol
 
 | Metric | Target | Current |
 |--------|--------|---------|
-| Database Tables | 12 | 0 (not initialized) |
-| Quran Verses | 6,236 | 0 |
-| Tafsir Passages | 50,000+ | 0 |
-| Classical Scholars | 6 | 4 (sample) |
+| Database Tables | 12 | Unknown (not inspected/initialized in this task) |
+| Quran Verses | 6,236 | Unknown |
+| Tafsir Passages | 50,000+ | Unknown |
+| Classical Scholars | 6 | Unknown |
 | RAG Latency | < 800ms | N/A |
 | Reader Transition | < 100ms | N/A |
 | Zero Hallucination | 100% | Designed |
@@ -234,9 +225,8 @@ psql -h localhost -p 5434 -U postgres -d quran_ai -c "SELECT COUNT(*) FROM schol
 - Quran verses seeded (6,236 verses)
 - Vector search tested and working
 
-**Phase 3 Start:** Week 2 (2026-11-12)
-- Agent orchestration completion
-- Evidence validation pipeline
-- Disagreement matrix implementation
+**Phase 3 Integration / Validation:** Week 2 (2026-11-12)
+- Validate agent orchestration and evidence checks against populated, verified data
+- Complete disagreement matrix UI and streaming work
 
 **MVP Delivery Target:** Week 4 (2026-11-25)

@@ -11,7 +11,7 @@ import re
 import logging
 from sqlalchemy.orm import Session
 
-from ..models import EvidenceLevel, EvidenceGrade
+from ..models import EvidenceLevel
 from ..agents.base_agent import BaseTafsirAgent
 
 logger = logging.getLogger(__name__)

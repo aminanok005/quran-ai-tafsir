@@ -12,7 +12,6 @@ import logging
 
 from ..models import AyahModel, TranslationModel, WordTranslationModel, SearchResponseModel
 from ..services import QuranAPIService
-from ..middleware import RateLimitMiddleware, CacheMiddleware
 
 router = APIRouter(tags=["Quran"])
 logger = logging.getLogger(__name__)
@@ -21,8 +20,6 @@ logger = logging.getLogger(__name__)
 quran_service = QuranAPIService()
 
 @router.get("/surahs", response_model=List[Dict[str, Any]])
-@CacheMiddleware(cache_key="surahs", ttl=3600)
-@RateLimitMiddleware(limit=100, window=60)
 async def get_surahs():
     """Get all surahs with basic information."""
     try:
@@ -33,8 +30,6 @@ async def get_surahs():
         raise HTTPException(status_code=500, detail="Failed to fetch surahs")
 
 @router.get("/surahs/{surah_number}", response_model=Dict[str, Any])
-@CacheMiddleware(cache_key="surah_{surah_number}", ttl=1800)
-@RateLimitMiddleware(limit=100, window=60)
 async def get_surah(surah_number: int):
     """Get specific surah by number."""
     try:
@@ -50,8 +45,6 @@ async def get_surah(surah_number: int):
         raise HTTPException(status_code=500, detail="Failed to fetch surah")
 
 @router.get("/ayahs/{surah_number}/{ayah_number}", response_model=Dict[str, Any])
-@CacheMiddleware(cache_key="ayah_{surah_number}_{ayah_number}", ttl=1800)
-@RateLimitMiddleware(limit=100, window=60)
 async def get_ayah(surah_number: int, ayah_number: int):
     """Get specific ayah by surah and ayah numbers."""
     try:
@@ -62,8 +55,6 @@ async def get_ayah(surah_number: int, ayah_number: int):
         raise HTTPException(status_code=500, detail="Failed to fetch ayah")
 
 @router.get("/ayahs/{surah_number}/{ayah_number}/translations", response_model=List[Dict[str, Any]])
-@CacheMiddleware(cache_key="translations_{surah_number}_{ayah_number}", ttl=900)
-@RateLimitMiddleware(limit=200, window=60)
 async def get_translations(
     surah_number: int,
     ayah_number: int,
@@ -80,8 +71,6 @@ async def get_translations(
         raise HTTPException(status_code=500, detail="Failed to fetch translations")
 
 @router.get("/ayahs/{surah_number}/{ayah_number}/words", response_model=List[Dict[str, Any]])
-@CacheMiddleware(cache_key="words_{surah_number}_{ayah_number}", ttl=900)
-@RateLimitMiddleware(limit=200, window=60)
 async def get_word_translations(
     surah_number: int,
     ayah_number: int
@@ -97,8 +86,6 @@ async def get_word_translations(
         raise HTTPException(status_code=500, detail="Failed to fetch word translations")
 
 @router.get("/search", response_model=Dict[str, Any])
-@CacheMiddleware(cache_key="search_{query}_{language}", ttl=300)
-@RateLimitMiddleware(limit=50, window=60)
 async def search_quran(
     query: str = Query(..., description="Search query"),
     language: str = Query(default="ar", description="Search language"),
@@ -125,8 +112,6 @@ async def search_quran(
         raise HTTPException(status_code=500, detail="Failed to search Quran")
 
 @router.get("/surahs/{surah_number}/ayahs", response_model=List[Dict[str, Any]])
-@CacheMiddleware(cache_key="surah_ayahs_{surah_number}", ttl=1800)
-@RateLimitMiddleware(limit=100, window=60)
 async def get_surah_ayahs(surah_number: int):
     """Get all ayahs for a specific surah."""
     try:
@@ -142,8 +127,6 @@ async def get_surah_ayahs(surah_number: int):
         raise HTTPException(status_code=500, detail="Failed to fetch surah ayahs")
 
 @router.get("/random-ayah", response_model=Dict[str, Any])
-@CacheMiddleware(cache_key="random_ayah", ttl=300)
-@RateLimitMiddleware(limit=50, window=60)
 async def get_random_ayah():
     """Get a random ayah."""
     try:
@@ -154,8 +137,6 @@ async def get_random_ayah():
         raise HTTPException(status_code=500, detail="Failed to fetch random ayah")
 
 @router.get("/metadata/languages", response_model=List[str])
-@CacheMiddleware(cache_key="languages", ttl=3600)
-@RateLimitMiddleware(limit=200, window=60)
 async def get_supported_languages():
     """Get list of supported languages."""
     try:
@@ -166,8 +147,6 @@ async def get_supported_languages():
         raise HTTPException(status_code=500, detail="Failed to fetch supported languages")
 
 @router.get("/metadata/surahs", response_model=List[Dict[str, Any]])
-@CacheMiddleware(cache_key="surah_metadata", ttl=3600)
-@RateLimitMiddleware(limit=200, window=60)
 async def get_surah_metadata():
     """Get metadata for all surahs."""
     try:
