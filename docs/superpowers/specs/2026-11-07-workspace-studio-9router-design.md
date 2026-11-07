@@ -16,10 +16,13 @@ In scope:
 - Keep personal Notes scoped to the existing signed browser identity and stored
   in PostgreSQL.
 - Generate an Audio script, a three-choice Quiz, and an Infographic through the
-  server-side 9Router integration and render them in Studio.
+  server-side local 9Router integration and render them in Studio. In local
+  development, a provider request is allowed only after an explicit Generate
+  click.
 - Add local playback, immediate quiz feedback, JSON export, and explicit
   artifact-to-Note saving.
-- Validate the flows locally without live model or Quran Foundation requests.
+- Validate the flows locally with offline automated checks and mocked
+  generation/source boundaries.
 
 Out of scope:
 
@@ -28,7 +31,8 @@ Out of scope:
   behavior for these kinds remains unchanged.
 - External audio, image, or video generation, generated media files, and
   automatic artifact persistence.
-- Calling external source APIs only to create a Studio artifact.
+- Calling external source APIs only to create a Studio artifact or calling a
+  remote LLM provider.
 
 ## Architecture
 
@@ -38,10 +42,12 @@ continues to use `react-resizable-panels`, persists its sizes and visibility in
 uses mobile tabs rather than forcing three narrow columns on small screens.
 
 The browser sends an artifact request to the existing FastAPI workspace route.
-FastAPI calls the configured OpenAI-compatible 9Router endpoint using
+FastAPI calls the configured local OpenAI-compatible 9Router endpoint using
 server-only `LLM_API_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, and
-`LLM_API_WIRE_API=responses` settings. Credentials must never reach client code,
-logs, or error responses.
+`LLM_API_WIRE_API=responses` settings. A request is made only in direct response
+to the user's Generate action; page load, selection changes, prefetching, and
+automatic retries must not call the provider. Credentials must never reach
+client code, logs, or error responses.
 
 Artifact grounding is limited to the currently selected Quran ayah and an
 already-loaded, approved Tafsir passage. The API may use only its existing
@@ -59,19 +65,28 @@ separate database record.
 ## Artifact contracts and behavior
 
 All three kinds use structured JSON validated by the API before returning it to
-the browser. Invalid or incomplete model output is an explicit error; there is
+the browser. Shared fields are `title` (1–160 characters) and `summary` (0–500
+characters). Invalid or incomplete model output is an explicit error; there is
 no silent template fallback.
 
-- **Audio:** Return a Thai, two-host script with labeled turns. Use browser
-  Speech Synthesis for local playback, with play/stop controls and a clear
-  status when the browser or a suitable voice is unavailable. Do not generate
-  or upload an audio file.
-- **Quiz:** Each question has exactly three options and exactly one valid answer.
-  Selecting an option immediately shows correctness and the explanation.
-  Progress and score are held only in the current page; they are not persisted.
-- **Infographic:** Return structured headings, key points, and layout hints.
-  Render these as responsive local cards, without an image-generation service,
-  and allow JSON export.
+- **Audio:** Return `segments`, an array of 4–8 entries. Each entry has a
+  `host` (`Host A` or `Host B`) and non-empty Thai `text` (maximum 1,200
+  characters). Start with `Host A` and alternate hosts. Use browser Speech
+  Synthesis for local playback, with play/stop controls and a clear status when
+  the browser or a suitable voice is unavailable. Do not generate or upload an
+  audio file.
+- **Quiz:** Return `questions`, exactly five entries. Each has a non-empty
+  `question` (maximum 500 characters), exactly three non-empty `options`
+  (maximum 200 characters each), one `answer_index` from 0 to 2, and a
+  non-empty `explanation` (maximum 1,000 characters). Selecting an option
+  immediately shows correctness and the explanation. Progress and score are
+  held only in the current page; they are not persisted.
+- **Infographic:** Return a non-empty `key_takeaway` (maximum 500 characters)
+  and 3–6 `cards`. Each card has a non-empty `heading` (maximum 100 characters)
+  and 2–5 non-empty `points` (maximum 280 characters each). Optional
+  `layout_hint` is one of `stacked`, `two-column`, or `sequence`. Render these
+  as responsive local cards, without an image-generation service, and allow
+  JSON export.
 
 Show Quran citation metadata and include Tafsir citation metadata only when the
 source is approved and was available in the server cache. Mark generated output
@@ -92,12 +107,14 @@ Use the repository's existing pytest, Jest, and TypeScript tooling:
 - Unit-test strict output validation for Audio, Quiz, and Infographic.
 - Test the API route with a mocked generator and mocked/cache-only Tafsir
   boundary, including the no-cache and unapproved-source failures.
-- Assert tests make no outbound model or Quran Foundation calls.
+- Assert tests make no outbound model or Quran Foundation calls. Manual
+  Generate clicks in local development may call only the configured local
+  9Router; no automated test may do so.
 - Test Studio rendering, immediate Quiz feedback, local Audio controls, JSON
   export, Save to Note, and error states with the existing Jest setup.
-- Run the web typecheck and targeted API/web tests; do not make a live 9Router
-  request as part of implementation or verification.
+- Run the web typecheck and targeted API/web tests; do not make a 9Router
+  request as part of automated verification.
 
-Live provider operation is not part of local verification. The latest recorded
-9Router attempt returned `401 invalid_api_key`; successful live generation must
-wait until the endpoint credential is repaired.
+Automated verification does not validate live provider operation. The latest
+recorded 9Router attempt returned `401 invalid_api_key`; successful manual
+generation requires the endpoint credential to be repaired.
