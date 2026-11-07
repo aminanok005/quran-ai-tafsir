@@ -1,6 +1,14 @@
+import os
 import unittest
+from unittest import mock
 
-from scripts.seed_quran_data import normalize_ayah, validate_ayahs
+from scripts.seed_quran_data import (
+    EXPECTED_AYAH_COUNT,
+    SURAH_AYAH_COUNTS,
+    fetch_surah_ayahs,
+    normalize_ayah,
+    validate_ayahs,
+)
 
 
 class QuranSeederTests(unittest.TestCase):
@@ -8,17 +16,21 @@ class QuranSeederTests(unittest.TestCase):
         ayah = normalize_ayah(
             2,
             {
-                "number": 255,
+                "verse_number": 255,
                 "text_uthmani": "آية",
-                "text_simple": "ayah",
+                "text_uthmani_simple": "ayah",
+                "text_imlaei": "ayah",
                 "juz_number": 3,
-                "sajdah": False,
+                "sajdah_type": "recommended",
             },
         )
 
         self.assertEqual(ayah["surah_number"], 2)
         self.assertEqual(ayah["ayah_number"], 255)
         self.assertEqual(ayah["text_uthmani"], "آية")
+        self.assertEqual(ayah["text_simple"], "ayah")
+        self.assertEqual(ayah["text_complex"], "ayah")
+        self.assertTrue(ayah["sajdah"])
         self.assertNotIn("id", ayah)
         self.assertNotIn("surah_id", ayah)
 
@@ -36,6 +48,44 @@ class QuranSeederTests(unittest.TestCase):
         ]
         with self.assertRaisesRegex(ValueError, "duplicate"):
             validate_ayahs(duplicate, expected_count=2)
+
+    def test_canonical_surah_counts_sum_to_expected_total(self):
+        self.assertEqual(len(SURAH_AYAH_COUNTS), 114)
+        self.assertEqual(sum(SURAH_AYAH_COUNTS), EXPECTED_AYAH_COUNT)
+
+    @mock.patch.dict(os.environ, {"QURAN_API_CLIENT_ID": "test-client"})
+    @mock.patch("requests.get")
+    def test_fetch_surah_ayahs_follows_all_api_pages(self, get):
+        verses = [
+            {"verse_number": number, "text_uthmani": f"ayah {number}"}
+            for number in range(1, 8)
+        ]
+        get.side_effect = [
+            mock.Mock(
+                json=lambda: {
+                    "verses": verses[:4],
+                    "pagination": {"current_page": 1, "total_pages": 2},
+                }
+            ),
+            mock.Mock(
+                json=lambda: {
+                    "verses": verses[4:],
+                    "pagination": {"current_page": 2, "total_pages": 2},
+                }
+            ),
+        ]
+
+        result = fetch_surah_ayahs(1, "test-token")
+
+        self.assertEqual(result, verses)
+        self.assertEqual(get.call_count, 2)
+        self.assertIn("/verses/by_chapter/1", get.call_args_list[0].args[0])
+        self.assertEqual(get.call_args_list[0].kwargs["params"]["page"], 1)
+        self.assertEqual(get.call_args_list[1].kwargs["params"]["page"], 2)
+        self.assertEqual(
+            get.call_args_list[0].kwargs["headers"]["x-auth-token"],
+            "test-token",
+        )
 
 
 if __name__ == "__main__":
