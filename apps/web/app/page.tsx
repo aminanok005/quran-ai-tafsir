@@ -525,7 +525,7 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
           <div className="rounded-xl border border-slate-200 bg-white p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-xs font-bold text-slate-700">{stringOf(tafsirSource, 'scholar')}</h3>
-              <span className="text-[10px] text-slate-400">{tafsir.development_mode === true ? 'โหมดพัฒนา · ไฟล์ JSON ในเครื่อง' : 'ต้นฉบับจากฐานข้อมูล'}</span>
+              <span className="text-[10px] text-slate-400">{tafsir.development_mode === true ? 'โหมดพัฒนา · Quran Foundation → PostgreSQL' : 'ต้นฉบับจากฐานข้อมูล'}</span>
             </div>
             <div className="rounded-xl border-l-4 border-[#0E5E4F] bg-[#F5F9F7] px-4 py-4">
               <p className="mb-2 text-[10px] font-bold tracking-wide text-[#0E5E4F]">คำแปลภาษาไทย</p>

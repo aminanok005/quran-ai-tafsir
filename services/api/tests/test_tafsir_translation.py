@@ -12,11 +12,11 @@ from services.api.app import app
 from services.api.routers.tafsir import (
     _public_passage,
     _translation_provider_http_exception,
-    _development_translations,
     _translation_is_allowed,
 )
 from services.api.services.tafsir_translation import translate_tafsir_to_thai
-from services.api.services.tafsir_json import get_tafsir_json_text, split_tafsir_text
+from services.api.services.quran_foundation_tafsir import QuranFoundationTafsir
+from services.api.services.tafsir_json import split_tafsir_text
 
 
 class RuntimeSettingsTests(unittest.TestCase):
@@ -177,11 +177,45 @@ class TafsirRightsTests(unittest.TestCase):
         self.assertEqual(response.json()["data"]["arabic_text"], "نص التفسير")
         self.assertEqual(response.json()["data"]["source"]["title"], "Tafsir Ibn Kathir")
 
-    def test_development_passage_reads_json_without_database(self):
+    def test_development_passage_fetches_and_caches_qf_result(self):
+        source = passage_record()
+        source.update(
+            {
+                "book_id": "qf_tafsir_169",
+                "permission_status": "development_only",
+                "book_verification_status": "unverified",
+                "verification_evidence": None,
+                "license": None,
+                "registered_permission_status": "development_only",
+                "registered_verification_status": "unverified",
+                "arabic_text": "Tafsir text from Quran Foundation",
+            }
+        )
+        api_passage = QuranFoundationTafsir(
+            resource_id=169,
+            resource_name="Tafsir Ibn Kathir",
+            language_name="english",
+            slug="en-tafisr-ibn-kathir",
+            verse_key="1:1",
+            text="Tafsir text from Quran Foundation",
+        )
+
+        class FakeQfClient:
+            content_api_url = "https://apis-prelive.quran.foundation/content/api/v4"
+
+            async def fetch_ayah(self, *_args):
+                return api_passage
+
         with (
             patch("services.api.routers.tafsir.settings.environment", "development"),
-            patch("services.api.routers.tafsir.get_engine", side_effect=AssertionError("database used")),
-            patch("services.api.routers.tafsir.get_tafsir_json_text", return_value="نص من ملف JSON"),
+            patch("services.api.routers.tafsir.settings.quran_tafsir_resource_map", {"ibn_kathir": 169}),
+            patch("services.api.routers.tafsir.get_engine", return_value=object()),
+            patch(
+                "services.api.routers.tafsir._get_passage",
+                side_effect=[None, source],
+            ),
+            patch("services.api.routers.tafsir.get_qf_tafsir_client", return_value=FakeQfClient()),
+            patch("services.api.routers.tafsir.upsert_development_qf_tafsir") as upsert,
             TestClient(app) as client,
         ):
             response = client.get(
@@ -192,23 +226,79 @@ class TafsirRightsTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         passage = response.json()["data"]
         self.assertTrue(passage["development_mode"])
-        self.assertTrue(passage["translation_allowed"])
-        self.assertEqual(passage["arabic_text"], "نص من ملف JSON")
+        self.assertFalse(passage["translation_allowed"])
+        self.assertEqual(passage["arabic_text"], "Tafsir text from Quran Foundation")
         self.assertEqual(passage["evidence_status"], "UNVERIFIED")
+        self.assertEqual(
+            passage["source"]["provider"],
+            "Quran Foundation Content API",
+        )
+        upsert.assert_called_once()
 
-    def test_development_translation_uses_openai_without_database(self):
-        cache_key = "al_saadi:1:1"
-        _development_translations.pop(cache_key, None)
+    def test_development_passage_uses_cached_database_row_without_fetching(self):
+        source = passage_record()
+        source.update(
+            {
+                "book_id": "qf_tafsir_169",
+                "permission_status": "development_only",
+                "book_verification_status": "unverified",
+                "verification_evidence": None,
+                "license": None,
+                "registered_permission_status": "development_only",
+                "registered_verification_status": "unverified",
+            }
+        )
         with (
             patch("services.api.routers.tafsir.settings.environment", "development"),
-            patch("services.api.routers.tafsir.settings.llm_provider", "openai"),
-            patch("services.api.routers.tafsir.settings.llm_api_key", "test-key"),
-            patch("services.api.routers.tafsir.settings.llm_model", "test-model"),
-            patch("services.api.routers.tafsir.settings.llm_api_base_url", "https://llm.example.test/v1"),
-            patch("services.api.routers.tafsir.settings.llm_api_wire_api", "responses"),
-            patch("services.api.routers.tafsir.get_engine", side_effect=AssertionError("database used")),
-            patch("services.api.routers.tafsir.get_tafsir_json_text", return_value="النص العربي"),
-            patch("services.api.routers.tafsir.translate_tafsir_to_thai", new_callable=AsyncMock, return_value="คำแปลจาก OpenAI") as translator,
+            patch("services.api.routers.tafsir.settings.quran_tafsir_resource_map", {"ibn_kathir": 169}),
+            patch("services.api.routers.tafsir.get_engine", return_value=object()),
+            patch("services.api.routers.tafsir._get_passage", return_value=source),
+            patch("services.api.routers.tafsir.get_qf_tafsir_client") as get_client,
+            TestClient(app) as client,
+        ):
+            response = client.get(
+                "/api/v1/tafsir/passages/1/1",
+                params={"agent_type": "ibn_kathir"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["data"]["development_mode"])
+        get_client.assert_not_called()
+
+    def test_production_does_not_fetch_or_expose_development_only_passage(self):
+        with (
+            patch("services.api.routers.tafsir.settings.environment", "production"),
+            patch("services.api.routers.tafsir.settings.quran_tafsir_resource_map", {"ibn_kathir": 169}),
+            patch("services.api.routers.tafsir.get_engine", return_value=object()),
+            patch("services.api.routers.tafsir._get_passage", return_value=None),
+            patch("services.api.routers.tafsir.get_qf_tafsir_client") as get_client,
+            TestClient(app) as client,
+        ):
+            response = client.get(
+                "/api/v1/tafsir/passages/1/1",
+                params={"agent_type": "ibn_kathir"},
+            )
+
+        self.assertEqual(response.status_code, 404)
+        get_client.assert_not_called()
+
+    def test_development_translation_blocks_unapproved_api_passage(self):
+        source = passage_record()
+        source.update(
+            {
+                "permission_status": "development_only",
+                "book_verification_status": "unverified",
+                "verification_evidence": None,
+                "license": None,
+                "registered_permission_status": "development_only",
+                "registered_verification_status": "unverified",
+            }
+        )
+        with (
+            patch("services.api.routers.tafsir.settings.environment", "development"),
+            patch("services.api.routers.tafsir.get_engine", return_value=object()),
+            patch("services.api.routers.tafsir._get_passage", return_value=source),
+            patch("services.api.routers.tafsir.translate_tafsir_to_thai", new_callable=AsyncMock) as translator,
             TestClient(app) as client,
         ):
             response = client.post(
@@ -216,25 +306,9 @@ class TafsirRightsTests(unittest.TestCase):
                 params={"agent_type": "al_saadi"},
                 json={},
             )
-            cached_response = client.post(
-                "/api/v1/tafsir/passages/dev/1/1/translate",
-                params={"agent_type": "al_saadi"},
-                json={},
-            )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["data"]["thai_translation"], "คำแปลจาก OpenAI")
-        self.assertFalse(response.json()["data"]["cached"])
-        self.assertTrue(cached_response.json()["data"]["cached"])
-        translator.assert_awaited_once()
-        translator.assert_awaited_once_with(
-            "النص العربي",
-            api_key="test-key",
-            model="test-model",
-            base_url="https://llm.example.test/v1",
-            wire_api="responses",
-        )
-        _development_translations.pop(cache_key, None)
+        self.assertEqual(response.status_code, 403)
+        translator.assert_not_awaited()
 
     def test_development_translation_route_is_disabled_outside_development(self):
         with (
@@ -269,7 +343,8 @@ class TafsirRightsTests(unittest.TestCase):
             patch("services.api.routers.tafsir.settings.llm_api_key", "test-key"),
             patch("services.api.routers.tafsir.settings.llm_model", "test-model"),
             patch("services.api.routers.tafsir.settings.llm_api_base_url", "https://llm.example.test/v1"),
-            patch("services.api.routers.tafsir.get_tafsir_json_text", return_value="النص العربي"),
+            patch("services.api.routers.tafsir.get_engine", return_value=object()),
+            patch("services.api.routers.tafsir._get_passage", return_value=passage_record()),
             patch("services.api.routers.tafsir.translate_tafsir_to_thai", new_callable=AsyncMock, side_effect=error),
             TestClient(app) as client,
         ):
@@ -289,12 +364,6 @@ class TafsirRightsTests(unittest.TestCase):
         self.assertGreater(len(chunks), 1)
         self.assertTrue(all(len(chunk) <= 6000 for chunk in chunks))
         self.assertEqual(" ".join(chunks), source_text)
-
-    def test_reads_selected_passage_from_repository_json(self):
-        source_text = get_tafsir_json_text("al_saadi", 1, 1)
-        self.assertIsNotNone(source_text)
-        self.assertTrue(source_text)
-        self.assertNotIn("<", source_text)
 
     def test_translation_endpoint_calls_openai_and_caches_result(self):
         source = passage_record()
