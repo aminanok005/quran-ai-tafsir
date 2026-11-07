@@ -35,9 +35,9 @@ docker compose -f docker/docker-compose.yml exec db \
 
 ## Seeding canonical Quran text
 
-The canonical seed command fetches all 6,236 ayahs, validates that the response
-is complete and has no duplicate ayah numbers, then upserts them into
-`quran_ayahs`.
+The canonical seed command fetches all 6,236 ayahs from the Quran Foundation
+Content API v4 by surah and page, validates each surah's canonical ayah count
+and uniqueness, then upserts them into `quran_ayahs`.
 
 Set `QURAN_API_CLIENT_ID`, `QURAN_API_CLIENT_SECRET`, and `DATABASE_URL` in the
 process environment using your local secret-management method, then run:
