@@ -101,21 +101,25 @@ output is an explicit error; there is no silent template fallback.
 Use exactly this client artifact envelope, rejecting unknown fields recursively:
 `{ kind, title, summary, content, sources, evidence_status }`. `kind` is one of
 `audio`, `quiz`, or `infographic`; `title` and `summary` use the shared limits
-above; `content` must match only the active kind's schema; `sources` is an
-array of `{ id, label, url }` with `id` equal to `quran` or `tafsir`; and
-`evidence_status` is exactly `AI-SYNTHESIS`. Sources and evidence status are
-server-generated and immutable in the editor.
+above; `content` must match only the active kind's schema; `sources` is an array
+of one or two `{ id, label, url }` entries with unique `id` values equal to
+`quran` or `tafsir`; `quran` is required exactly once, and `tafsir` is permitted
+at most once and only when selected, approved, and available in the server
+cache; and `evidence_status` is exactly `AI-SYNTHESIS`. Sources and evidence
+status are server-generated and immutable in the editor.
 
 Render clickable citation pills below the artifact title: `[1] <surah name>
-<surah>:<ayah>` links to the HTTPS canonical `https://quran.com/<surah>/<ayah>`
-URL constructed by the server from the validated ayah identity, never from
-model output or browser-supplied URLs. Validate the surah/ayah pair against
-local canonical Quran verse-count metadata. `[2] <resource name>` links only to
-the Quran Foundation Content API URL constructed server-side from the configured
-Content API base URL, configured resource ID, and cached ayah key, and only when
-that Tafsir is approved and available in the server cache. Validate HTTPS and
-that the host matches the configured Quran Foundation API host. Never accept a
-Tafsir citation URL from model output or browser input.
+<surah>:<ayah>` links to the HTTPS canonical
+`https://quran.com/<surah>/<ayah>` URL constructed by the server from the
+validated ayah identity, never from model output or browser-supplied URLs.
+Validate the surah/ayah pair against local canonical Quran verse-count metadata.
+`[2] <resource name>` links only to the exact URL
+`{configured_content_api_base}/tafsirs/{resource_id}/by_ayah/{surah}:{ayah}`,
+constructed server-side from the configured Content API base URL, configured
+integer resource ID, and cached ayah key, and only when that Tafsir is approved
+and available in the server cache. Validate HTTPS and that the host matches the
+configured Quran Foundation API host. Never accept a Tafsir citation URL from
+model output or browser input.
 
 The editor accepts JSON for `{ title, summary, content }` only and validates it
 against the active kind schema. A valid edit replaces those fields in the
@@ -124,7 +128,11 @@ invalid JSON or schema leaves the last valid preview intact, shows a validation
 error, and blocks Save and Export until corrected. Export the full validated
 artifact envelope. **Save to Note** stores that exact envelope as JSON in the
 existing note `content` field, uses the edited title, and records the selected
-ayah/source metadata through the existing note API.
+ayah/source metadata through the existing note API: `surah_number` and
+`ayah_number` are the selected ayah identity; `source_label` is
+`Quran <surah name> <surah>:<ayah>` when only Quran is selected, or
+`Quran <surah name> <surah>:<ayah>; <Tafsir resource name>` when an approved
+cached Tafsir is included.
 
 ## Errors and privacy
 
@@ -150,6 +158,8 @@ Use the repository's existing pytest, Jest, and TypeScript tooling:
 - Test Studio rendering, immediate Quiz feedback, local Audio controls, JSON
   export, editable JSON validation, citation links, Save to Note, and error
   states with the existing Jest setup.
+- Assert the artifact endpoint is not called on page load or source-selection
+  changes, and is called once only after the user activates Generate.
 - Verify citation/evidence metadata cannot be edited and that Save to Note
   stores exactly `{ kind, title, summary, content, sources, evidence_status }`,
   including the server-generated citations.
