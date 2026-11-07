@@ -49,6 +49,11 @@ to the user's Generate action; page load, selection changes, prefetching, and
 automatic retries must not call the provider. Credentials must never reach
 client code, logs, or error responses.
 
+This local 9Router integration is development-only: the API must reject artifact
+generation unless `ENVIRONMENT=development` and the configured provider host is
+loopback (`localhost`, `127.0.0.1`, or `::1`). Production must not call this
+local endpoint.
+
 Artifact grounding is limited to the currently selected Quran ayah and an
 already-loaded, approved Tafsir passage. The API may use only its existing
 short-lived in-memory Tafsir cache; it must not fetch a source passage on an
@@ -93,25 +98,33 @@ output is an explicit error; there is no silent template fallback.
   as responsive local cards, without an image-generation service, and allow
   JSON export.
 
-Keep source metadata separate from editable artifact content. Render clickable
-citation pills below the artifact title: `[1] <surah name> <surah>:<ayah>` links
-to `https://quran.com/<surah>/<ayah>`. `[2] <resource name>` links only to the
-Quran Foundation Content API URL constructed server-side from the configured
-Content API base URL, configured resource ID, and cached ayah key, and only
-when that Tafsir is approved and available in the server cache. Validate HTTPS
-and that the host matches the configured Quran Foundation API host. Never
-accept a Tafsir citation URL from model output or browser input. Mark generated
-output as `AI-SYNTHESIS`.
+Use exactly this client artifact envelope, rejecting unknown fields recursively:
+`{ kind, title, summary, content, sources, evidence_status }`. `kind` is one of
+`audio`, `quiz`, or `infographic`; `title` and `summary` use the shared limits
+above; `content` must match only the active kind's schema; `sources` is an
+array of `{ id, label, url }` with `id` equal to `quran` or `tafsir`; and
+`evidence_status` is exactly `AI-SYNTHESIS`. Sources and evidence status are
+server-generated and immutable in the editor.
 
-The JSON editor edits the artifact's `title`, `summary`, and kind-specific
-content fields, but not server-returned citations or evidence status. Valid JSON
-matching the active artifact schema updates the preview; invalid JSON leaves
-the last valid preview intact, shows a validation error, and blocks Save and
-Export until corrected. Export the validated artifact envelope, including
-server-returned citations and evidence status, as JSON. **Save to Note** stores
-that same validated envelope in the existing note `content` field, uses the
-edited title, and records the selected ayah/source metadata through the existing
-note API.
+Render clickable citation pills below the artifact title: `[1] <surah name>
+<surah>:<ayah>` links to the HTTPS canonical `https://quran.com/<surah>/<ayah>`
+URL constructed by the server from the validated ayah identity, never from
+model output or browser-supplied URLs. Validate the surah/ayah pair against
+local canonical Quran verse-count metadata. `[2] <resource name>` links only to
+the Quran Foundation Content API URL constructed server-side from the configured
+Content API base URL, configured resource ID, and cached ayah key, and only when
+that Tafsir is approved and available in the server cache. Validate HTTPS and
+that the host matches the configured Quran Foundation API host. Never accept a
+Tafsir citation URL from model output or browser input.
+
+The editor accepts JSON for `{ title, summary, content }` only and validates it
+against the active kind schema. A valid edit replaces those fields in the
+preview while preserving immutable `kind`, `sources`, and `evidence_status`;
+invalid JSON or schema leaves the last valid preview intact, shows a validation
+error, and blocks Save and Export until corrected. Export the full validated
+artifact envelope. **Save to Note** stores that exact envelope as JSON in the
+existing note `content` field, uses the edited title, and records the selected
+ayah/source metadata through the existing note API.
 
 ## Errors and privacy
 
@@ -128,6 +141,8 @@ Use the repository's existing pytest, Jest, and TypeScript tooling:
 - Unit-test strict output validation for Audio, Quiz, and Infographic.
 - Test the API route with a mocked generator and mocked/cache-only Tafsir
   boundary, including the no-cache and unapproved-source failures.
+- Verify the API rejects generation outside development and when the configured
+  provider host is not loopback.
 - Assert automated tests make zero network calls, including to 9Router and
   Quran Foundation. Manual
   Generate clicks in local development may call only the configured local
@@ -136,7 +151,8 @@ Use the repository's existing pytest, Jest, and TypeScript tooling:
   export, editable JSON validation, citation links, Save to Note, and error
   states with the existing Jest setup.
 - Verify citation/evidence metadata cannot be edited and that Save to Note
-  stores exactly the validated artifact envelope, including its citations.
+  stores exactly `{ kind, title, summary, content, sources, evidence_status }`,
+  including the server-generated citations.
 - Test panel persistence, the `[`/`]` mapping outside editable controls, and
   mobile view-tab selection.
 - Run the web typecheck and targeted API/web tests; do not make a 9Router
