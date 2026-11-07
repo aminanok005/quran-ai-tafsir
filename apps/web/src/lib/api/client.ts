@@ -15,7 +15,7 @@ export type StudyNote = {
 };
 
 export type StudioArtifactRequest = {
-  kind: 'audio' | 'report' | 'slides' | 'video' | 'flashcards' | 'quiz' | 'infographic' | 'comparison';
+  kind: StudioArtifactKind;
   surah_number: number;
   ayah_number: number;
   surah_name: string;
@@ -23,6 +23,147 @@ export type StudioArtifactRequest = {
   translation: string;
   tafsir_book_id: string | null;
   selected_sources: string[];
+};
+
+export type TargetStudioArtifactKind = 'audio' | 'quiz' | 'infographic';
+export type StudioArtifactKind =
+  | TargetStudioArtifactKind
+  | 'report'
+  | 'slides'
+  | 'video'
+  | 'flashcards'
+  | 'comparison';
+
+export type StudioArtifactSource = {
+  id: string;
+  label: string;
+  url: string;
+};
+
+export type AudioHost = 'Host A' | 'Host B';
+export type AudioStudioArtifact = {
+  title: string;
+  summary: string;
+  content: {
+    segments: Array<{ host: AudioHost; text: string }>;
+  };
+};
+
+export type QuizStudioArtifact = {
+  title: string;
+  summary: string;
+  content: {
+    questions: Array<{
+      question: string;
+      options: [string, string, string];
+      answer_index: 0 | 1 | 2;
+      explanation: string;
+    }>;
+  };
+};
+
+export type InfographicLayoutHint = 'stacked' | 'two-column' | 'sequence';
+export type InfographicStudioArtifact = {
+  title: string;
+  summary: string;
+  content: {
+    takeaway: string;
+    cards: Array<{ heading: string; points: string[] }>;
+    layout_hint?: InfographicLayoutHint;
+  };
+};
+
+export type StudioArtifactEnvelope =
+  | AudioStudioArtifact
+  | QuizStudioArtifact
+  | InfographicStudioArtifact;
+
+export type TargetStudioArtifactData =
+  | {
+      kind: 'audio';
+      artifact: AudioStudioArtifact;
+      sources: StudioArtifactSource[];
+      evidence_status: 'AI-SYNTHESIS';
+    }
+  | {
+      kind: 'quiz';
+      artifact: QuizStudioArtifact;
+      sources: StudioArtifactSource[];
+      evidence_status: 'AI-SYNTHESIS';
+    }
+  | {
+      kind: 'infographic';
+      artifact: InfographicStudioArtifact;
+      sources: StudioArtifactSource[];
+      evidence_status: 'AI-SYNTHESIS';
+    };
+
+export type LegacyStudioArtifactKind = Exclude<
+  StudioArtifactKind,
+  TargetStudioArtifactKind
+>;
+export type LegacyStudioArtifactData = {
+  kind: LegacyStudioArtifactKind;
+  title: string;
+  summary: string;
+  sections: unknown[];
+  slides: unknown[];
+  scenes: unknown[];
+  questions: unknown[];
+  flashcards: unknown[];
+  rows: unknown[];
+  sources: StudioArtifactSource[];
+  evidence_status: string;
+};
+
+export type StudioArtifactResponse = {
+  success: boolean;
+  data: TargetStudioArtifactData | LegacyStudioArtifactData;
+};
+
+export type AgentCitation = {
+  passage_id: string;
+  evidence_status: string;
+  reference: {
+    book?: string;
+    scholar?: string;
+    volume?: number | string | null;
+    page?: number | string | null;
+    edition?: string | null;
+    url?: string | null;
+  };
+};
+
+export type AgentOutput = {
+  status?: string;
+  error?: string;
+  explanation?: string | Record<string, unknown>;
+  evidence_level?: string;
+  citations?: AgentCitation[];
+};
+
+export type AgentAnalysisResponse = {
+  success: boolean;
+  data: {
+    ayah_id: string;
+    agents_executed: string[];
+    agent_outputs: Record<string, AgentOutput>;
+    evidence_summary: {
+      total_sources: number;
+      verified_sources: number;
+      unverified_sources: number;
+      ai_synthesis: number;
+    };
+    validation?: {
+      overall_valid: boolean;
+      agent_validations: Record<string, {
+        valid: boolean;
+        errors: string[];
+        warnings: string[];
+        evidence_level: string;
+      }>;
+    };
+  };
 };
 
 // API Client - Client-side fetch wrapper
@@ -111,8 +252,8 @@ export class ApiClient {
     }
   }
 
-  async createStudioArtifact(request: StudioArtifactRequest): Promise<{ success: boolean; data: Record<string, unknown> }> {
-    return this.request('/workspace/artifacts', {
+  async createStudioArtifact(request: StudioArtifactRequest): Promise<StudioArtifactResponse> {
+    return this.request<StudioArtifactResponse>('/workspace/artifacts', {
       method: 'POST',
       body: JSON.stringify(request),
     });
@@ -124,39 +265,35 @@ export class ApiClient {
     );
   }
 
-  async translateTafsirPassage(passageId: string) {
-    return this.request<unknown>(`/tafsir/passages/${encodeURIComponent(passageId)}/translate`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    });
-  }
-
-  async translateDevelopmentTafsirPassage(surah: number, ayah: number, agentType: string) {
+  async translateApiTafsirPassage(surah: number, ayah: number, agentType: string) {
     const query = `agent_type=${encodeURIComponent(agentType)}`;
-    return this.request<unknown>(`/tafsir/passages/dev/${surah}/${ayah}/translate?${query}`, {
+    return this.request<unknown>(`/tafsir/passages/api/${surah}/${ayah}/translate?${query}`, {
       method: 'POST',
       body: JSON.stringify({}),
     });
   }
 
-  async getAgentExplanation(surah: number, ayah: number, agentType: string) {
-    const endpoint = `/tafsir/agents/explain?surah=${surah}&ayah=${ayah}&agent_type=${agentType}&language=th`;
-    try {
-      return await this.request<any>(endpoint);
-    } catch (error) {
-      console.error('Failed to get agent explanation:', error);
-      return null;
-    }
+  async getAgentExplanation(
+    surah: number,
+    ayah: number,
+    agentType: string,
+    question = '',
+  ): Promise<AgentAnalysisResponse> {
+    const query = new URLSearchParams({
+      ayah_id: `${surah}:${ayah}`,
+    });
+    return this.request<AgentAnalysisResponse>(`/tafsir/agents/explain?${query}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        agent_types: [agentType],
+        context: { question, language: 'th' },
+      }),
+    });
   }
 
-  async compareAgents(surah: number, ayah: number) {
-    const endpoint = `/tafsir/compare?surah=${surah}&ayah=${ayah}`;
-    try {
-      return await this.request<any>(endpoint);
-    } catch (error) {
-      console.error('Failed to compare agents:', error);
-      return null;
-    }
+  async compareAgents(surah: number, ayah: number): Promise<unknown> {
+    const query = new URLSearchParams({ ayah_id: `${surah}:${ayah}` });
+    return this.request(`/tafsir/agents/compare?${query}`, { method: 'POST' });
   }
 
   async generateFlashcards(surah: number, ayahRange: number[], cardCount: number) {

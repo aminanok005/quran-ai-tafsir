@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from threading import Lock
 from typing import Any, Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
@@ -17,7 +17,14 @@ from sqlalchemy.engine import Engine
 
 from ..config import settings
 from ..services.browser_identity import get_or_create_browser_id
+from ..services.quran_foundation_tafsir import QuranFoundationTafsirError
+from ..services.quran_metadata import is_valid_ayah
 from ..services.studio_generation import StudioGenerationError, generate_artifact
+from .tafsir import (
+    _get_api_source_permission,
+    _translation_is_allowed,
+    get_qf_tafsir_client,
+)
 
 router = APIRouter(prefix="/workspace", tags=["Workspace"])
 logger = logging.getLogger(__name__)
@@ -26,6 +33,7 @@ _studio_rate_lock = Lock()
 _studio_requests: dict[UUID, list[float]] = {}
 _STUDIO_LIMIT = 5
 _STUDIO_WINDOW_SECONDS = 60
+_LOCAL_LLM_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 ArtifactKind = Literal[
     "audio",
@@ -48,6 +56,53 @@ def get_engine() -> Engine:
 
 def current_browser_id(request: Request, response: Response) -> UUID:
     return get_or_create_browser_id(request, response)
+
+
+def _is_loopback_provider_url(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+        _ = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme in {"http", "https"}
+        and parsed.hostname in _LOCAL_LLM_HOSTS
+        and parsed.username is None
+        and parsed.password is None
+        and not parsed.query
+        and not parsed.fragment
+    )
+
+
+def _trusted_qf_content_api_base(content_api_url: str) -> str:
+    try:
+        configured = urlsplit(settings.quran_api_base_url)
+        content_api = urlsplit(content_api_url)
+        _ = configured.port
+        _ = content_api.port
+    except ValueError:
+        raise HTTPException(
+            status_code=503,
+            detail="Quran Foundation Content API URL is not safely configured",
+        ) from None
+
+    if (
+        configured.scheme != "https"
+        or content_api.scheme != "https"
+        or configured.hostname is None
+        or content_api.hostname != configured.hostname
+        or configured.username is not None
+        or configured.password is not None
+        or content_api.username is not None
+        or content_api.password is not None
+        or content_api.query
+        or content_api.fragment
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="Quran Foundation Content API URL is not safely configured",
+        )
+    return content_api_url.rstrip("/")
 
 
 class NoteCreate(BaseModel):
@@ -197,10 +252,34 @@ async def create_artifact(
     request: ArtifactRequest,
     browser_id: UUID = Depends(current_browser_id),
 ) -> dict[str, Any]:
+    if not is_valid_ayah(request.surah_number, request.ayah_number):
+        raise HTTPException(status_code=422, detail="Selected Quran verse is invalid")
     if "quran" not in request.selected_sources:
         raise HTTPException(status_code=422, detail="Select the Quran source to ground this artifact")
-    if not settings.translation_api_key or not settings.llm_api_base_url or not settings.llm_model:
-        raise HTTPException(status_code=503, detail="Studio generation is not configured")
+    if settings.environment != "development":
+        raise HTTPException(
+            status_code=403,
+            detail="Studio generation is available only in the development environment",
+        )
+    missing_settings = [
+        name
+        for name, value in (
+            ("LLM_API_KEY", settings.translation_api_key),
+            ("LLM_API_BASE_URL", settings.llm_api_base_url),
+            ("LLM_MODEL", settings.llm_model),
+        )
+        if not value
+    ]
+    if missing_settings:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Studio generation is missing configuration: {', '.join(missing_settings)}",
+        )
+    if not _is_loopback_provider_url(settings.llm_api_base_url):
+        raise HTTPException(
+            status_code=503,
+            detail="LLM_API_BASE_URL must use a valid loopback host for local Studio generation",
+        )
     if len(request.arabic_text) + len(request.translation) > 16000:
         raise HTTPException(status_code=413, detail="Selected source context is too long")
     now = time.monotonic()
@@ -217,42 +296,68 @@ async def create_artifact(
     tafsir_context: dict[str, str] | None = None
     if "tafsir" in request.selected_sources:
         if not request.tafsir_book_id:
-            raise HTTPException(status_code=422, detail="Select an approved Tafsir book")
-        with get_engine().connect() as connection:
-            row = connection.execute(
-                text("""
-                    SELECT p.arabic_text, b.title,
-                           COALESCE(sp.source_url, b.source_url, p.source_url) AS source_url
-                    FROM tafsir_passages AS p
-                    JOIN tafsir_books AS b ON b.id = p.book_id
-                    LEFT JOIN source_permissions AS sp ON sp.source_id = b.book_id
-                    WHERE p.surah_number = :surah
-                      AND p.ayah_start <= :ayah
-                      AND p.ayah_end >= :ayah
-                      AND b.book_id = :book_id
-                      AND b.permission_status::text = 'approved'
-                      AND b.verification_status::text = 'verified'
-                      AND sp.permission_status::text = 'approved'
-                      AND sp.verification_status::text = 'verified'
-                    ORDER BY p.created_at DESC
-                    LIMIT 1
-                """),
-                {
-                    "surah": request.surah_number,
-                    "ayah": request.ayah_number,
-                    "book_id": request.tafsir_book_id,
-                },
-            ).mappings().first()
-        if row is None:
+            raise HTTPException(status_code=422, detail="Select an approved Quran Foundation Tafsir resource")
+        resource_suffix = request.tafsir_book_id.removeprefix("qf_tafsir_")
+        if (
+            not resource_suffix.isdecimal()
+            or request.tafsir_book_id != f"qf_tafsir_{resource_suffix}"
+        ):
+            raise HTTPException(status_code=422, detail="Select a configured Quran Foundation Tafsir resource")
+        resource_id = int(resource_suffix)
+        if resource_id not in settings.quran_tafsir_resource_map.values():
+            raise HTTPException(
+                status_code=403,
+                detail="This Quran Foundation Tafsir resource is not configured for this application",
+            )
+        permission = _get_api_source_permission(get_engine(), resource_id)
+        if not _translation_is_allowed(permission) or permission is None:
             raise HTTPException(
                 status_code=403,
                 detail="This Tafsir source has not been approved for AI-derived study artifacts",
             )
+        try:
+            client = get_qf_tafsir_client()
+            passage = client.get_cached_ayah(
+                resource_id,
+                request.surah_number,
+                request.ayah_number,
+            )
+        except QuranFoundationTafsirError as error:
+            status_code = 503 if error.status_code is None or error.status_code >= 500 else 502
+            logger.warning(
+                "Quran Foundation Tafsir cache lookup failed for Studio (HTTP %s)",
+                error.status_code or "network",
+            )
+            raise HTTPException(
+                status_code=status_code,
+                detail="Could not read the approved Quran Foundation Tafsir cache",
+            ) from error
+        expected_verse_key = f"{request.surah_number}:{request.ayah_number}"
+        if passage is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Load the Tafsir passage first, then retry Studio generation",
+            )
+        if passage.verse_key != expected_verse_key:
+            raise HTTPException(
+                status_code=409,
+                detail="The cached Tafsir passage does not match the selected Quran verse",
+            )
+        content_api_base = _trusted_qf_content_api_base(client.content_api_url)
         tafsir_context = {
-            "text": row["arabic_text"],
-            "title": row["title"],
-            "source_url": row["source_url"] or "",
+            "text": passage.text,
+            "title": f"Tafsir resource {resource_id}",
+            "resource_id": str(resource_id),
+            "source_url": (
+                f"{content_api_base}/tafsirs/{resource_id}/by_ayah/{expected_verse_key}"
+            ),
         }
+
+    context_length = len(request.arabic_text) + len(request.translation)
+    if tafsir_context:
+        context_length += len(tafsir_context["text"])
+    if context_length > 16000:
+        raise HTTPException(status_code=413, detail="Selected source context is too long")
 
     source_context = {
         "reference": f"{request.surah_name} {request.surah_number}:{request.ayah_number}",
@@ -278,9 +383,51 @@ async def create_artifact(
             status_code=503 if status >= 500 or status == 429 else 502,
             detail="The configured AI provider could not generate this artifact",
         ) from error
-    except (httpx.RequestError, StudioGenerationError) as error:
+    except StudioGenerationError as error:
+        if error.status_code is not None:
+            logger.warning("Studio provider returned HTTP %s", error.status_code)
+            raise HTTPException(
+                status_code=(
+                    503
+                    if error.status_code >= 500 or error.status_code == 429
+                    else 502
+                ),
+                detail="The configured AI provider could not generate this artifact",
+            ) from error
         logger.warning("Studio generation failed: %s", type(error).__name__)
         raise HTTPException(status_code=502, detail="AI returned an invalid Studio artifact") from error
+    except httpx.RequestError as error:
+        logger.warning("Studio generation failed: %s", type(error).__name__)
+        raise HTTPException(status_code=502, detail="AI returned an invalid Studio artifact") from error
+
+    sources = [
+        {
+            "id": "quran",
+            "label": f"Quran {request.surah_number}:{request.ayah_number}",
+            "url": f"https://quran.com/{request.surah_number}/{request.ayah_number}",
+        },
+        *(
+            [
+                {
+                    "id": f"tafsir-{tafsir_context['resource_id']}",
+                    "label": tafsir_context["title"],
+                    "url": tafsir_context["source_url"],
+                }
+            ]
+            if tafsir_context
+            else []
+        ),
+    ]
+    if request.kind in {"audio", "quiz", "infographic"}:
+        return {
+            "success": True,
+            "data": {
+                "kind": request.kind,
+                "artifact": content,
+                "sources": sources,
+                "evidence_status": "AI-SYNTHESIS",
+            },
+        }
 
     return {
         "success": True,
@@ -294,22 +441,7 @@ async def create_artifact(
             "questions": content["questions"],
             "flashcards": content["flashcards"],
             "rows": content["rows"],
-            "sources": [
-                {
-                    "id": "quran",
-                    "label": source_context["reference"],
-                    "url": f"https://quran.com/{request.surah_number}/{request.ayah_number}",
-                },
-                *(
-                    [{
-                        "id": "tafsir",
-                        "label": tafsir_context["title"],
-                        "url": tafsir_context["source_url"] or None,
-                    }]
-                    if tafsir_context
-                    else []
-                ),
-            ],
+            "sources": sources,
             "evidence_status": "AI-SYNTHESIS",
         },
     }

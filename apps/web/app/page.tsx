@@ -3,16 +3,24 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apiClient } from '../src/lib/api/client';
+import type { TargetStudioArtifactData } from '../src/lib/api/client';
 import { amiriQuran, notoSansThai } from '../src/components/ui/fonts';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Sparkles } from 'lucide-react';
 import { SourcesPanel, StudioPanel, StudyContext } from '../src/components/workspace/WorkspacePanels';
+import { WorkspaceMobileTabs } from '../src/components/workspace/WorkspaceMobileTabs';
+import type { WorkspaceMobileView } from '../src/components/workspace/WorkspaceMobileTabs';
+import {
+  getWorkspaceShortcutAction,
+  readWorkspaceLayout,
+  serializeWorkspaceLayout,
+  WORKSPACE_LAYOUT_STORAGE_KEY,
+} from '../src/lib/workspace-layout';
 
 type DataRecord = Record<string, unknown>;
 type Status = 'idle' | 'loading' | 'success' | 'error' | 'empty';
 type CachedTafsir = { passage: DataRecord; translationError: string };
-type PanelSizes = { sources: number; reader: number; studio: number };
 
 const thaiTranslationCache = new Map<number, Promise<unknown>>();
 
@@ -87,6 +95,16 @@ function stringOf(value: unknown, ...keys: string[]): string {
     if (typeof value[key] === 'string' && value[key]) return value[key] as string;
   }
   return '';
+}
+
+function safeHttpUrl(value: unknown): string {
+  if (typeof value !== 'string') return '';
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : '';
+  } catch {
+    return '';
+  }
 }
 
 function numberOf(value: unknown, fallback: number): number {
@@ -305,39 +323,43 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
   const [search, setSearch] = useState('');
   const [arabicFontSize, setArabicFontSize] = useState(36);
   const [mobileSurahMenuOpen, setMobileSurahMenuOpen] = useState(false);
-  const [mobileView, setMobileView] = useState<'reader' | 'sources' | 'dialogue' | 'studio'>('reader');
+  const [mobileView, setMobileView] = useState<WorkspaceMobileView>('reader');
   const [centerView, setCenterView] = useState<'reader' | 'dialogue'>('reader');
+  const [dialogueMode, setDialogueMode] = useState<'tafsir' | 'explain' | 'compare'>('tafsir');
+  const [questionDraft, setQuestionDraft] = useState('');
+  const [submittedQuestion, setSubmittedQuestion] = useState('');
   const [sourcesOpen, setSourcesOpen] = useState(true);
   const [studioOpen, setStudioOpen] = useState(true);
   const [selectedSources, setSelectedSources] = useState<string[]>(['quran']);
-  const [panelLayout, setPanelLayout] = useState<PanelSizes>({ sources: 24, reader: 49, studio: 27 });
+  const [panelLayout, setPanelLayout] = useState({ sources: 24, reader: 49, studio: 27 });
   const audioRef = useRef<HTMLAudioElement>(null);
   const tafsirCache = useRef(new Map<string, CachedTafsir>());
   const tafsirRequests = useRef(new Map<string, Promise<CachedTafsir>>());
   const activeTafsirKey = useRef(`${initialSurah}:${initialAyah}:${agents[0].id}`);
+  const explanationQuery = useQuery({
+    queryKey: ['agents', 'explain', surah, ayah, agent, submittedQuestion],
+    queryFn: () => apiClient.getAgentExplanation(surah, ayah, agent, submittedQuestion),
+    enabled: centerView === 'dialogue' && dialogueMode === 'explain' && Boolean(submittedQuestion.trim()),
+    retry: false,
+    staleTime: 60_000,
+  });
+  const comparisonQuery = useQuery({
+    queryKey: ['agents', 'compare', surah, ayah],
+    queryFn: () => apiClient.compareAgents(surah, ayah),
+    enabled: centerView === 'dialogue' && dialogueMode === 'compare',
+    retry: false,
+    staleTime: 60_000,
+  });
 
   useEffect(() => {
-    const saved = window.localStorage.getItem('quran-workspace-layout');
-    if (!saved) return;
-    try {
-      const state: unknown = JSON.parse(saved);
-      if (!isRecord(state)) return;
-      if (typeof state.sourcesOpen === 'boolean') setSourcesOpen(state.sourcesOpen);
-      if (typeof state.studioOpen === 'boolean') setStudioOpen(state.studioOpen);
-      if (isRecord(state.panelLayout)) {
-        const values = Object.fromEntries(
-          Object.entries(state.panelLayout).filter((entry): entry is [string, number] =>
-            typeof entry[1] === 'number' && Number.isFinite(entry[1]) && entry[1] > 0),
-        );
-        if (Object.keys(values).length) setPanelLayout((current) => ({ ...current, ...values }));
-      }
-    } catch (failure) {
-      console.warn('Ignoring invalid saved workspace layout', failure);
-    }
+    const savedLayout = readWorkspaceLayout(window.localStorage);
+    setSourcesOpen(savedLayout.sourcesOpen);
+    setStudioOpen(savedLayout.studioOpen);
+    setPanelLayout(savedLayout.panelLayout);
   }, []);
 
   useEffect(() => {
-    window.localStorage.setItem('quran-workspace-layout', JSON.stringify({
+    window.localStorage.setItem(WORKSPACE_LAYOUT_STORAGE_KEY, serializeWorkspaceLayout({
       sourcesOpen,
       studioOpen,
       panelLayout,
@@ -346,15 +368,12 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
 
   useEffect(() => {
     const onShortcut = (event: KeyboardEvent) => {
-      const target = event.target;
-      if (target instanceof HTMLElement && (
-        target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
-      )) return;
-      if (event.key === '[') {
-        event.preventDefault();
+      const action = getWorkspaceShortcutAction(event.key, event.target);
+      if (action === null) return;
+      event.preventDefault();
+      if (action === 'toggle-sources') {
         setSourcesOpen((open) => !open);
-      } else if (event.key === ']') {
-        event.preventDefault();
+      } else if (action === 'toggle-studio') {
         setStudioOpen((open) => !open);
       }
     };
@@ -485,9 +504,11 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
             translationError = stringOf(passage, 'translation_block_reason') || 'แหล่งข้อมูลนี้ยังไม่ได้รับอนุมัติสำหรับการแปลด้วย AI';
           } else {
             try {
-              const translationResponse = passage.development_mode === true
-                ? await apiClient.translateDevelopmentTafsirPassage(targetSurah, targetAyah, targetAgent)
-                : await apiClient.translateTafsirPassage(stringOf(passage, 'id'));
+              const translationResponse = await apiClient.translateApiTafsirPassage(
+                targetSurah,
+                targetAyah,
+                targetAgent,
+              );
               const translationData = isRecord(translationResponse) && isRecord(translationResponse.data)
                 ? translationResponse.data
                 : null;
@@ -553,11 +574,23 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
     void activateTafsir(surah, ayah, agentId);
   };
   const tafsirSource = isRecord(tafsir?.source) ? tafsir.source : null;
+  const tafsirLanguage = stringOf(tafsirSource, 'language_name').toLowerCase();
+  const isArabicTafsir = tafsirLanguage.includes('arab');
   const hasThaiTranslation = typeof tafsir?.thai_translation === 'string' && tafsir.thai_translation.length > 0;
   const thaiTafsirParagraphs = translationParagraphs(stringOf(tafsir, 'thai_translation'));
   const selectedArabic = textOf(ayahs.find((item) => numberOf(item, 0) === ayah));
   const audioUrl = audioByAyah[ayah] ?? '';
   const tafsirApproved = tafsir?.translation_allowed === true;
+  const openAiExplanation = () => {
+    setDialogueMode('explain');
+    setCenterView('dialogue');
+    setMobileView('dialogue');
+  };
+  const submitQuestion = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const question = questionDraft.trim();
+    if (question) setSubmittedQuestion(question);
+  };
   const visiblePanelLayout = useMemo<number[]>(() => {
     const sourceSize = panelLayout.sources ?? 24;
     const readerSize = panelLayout.reader ?? 49;
@@ -596,6 +629,25 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
     });
     queryClient.setQueryData<DataRecord[]>(['workspace', 'notes'], (notes = []) => [data, ...notes]);
   };
+  const saveStudioArtifactNote = async (artifact: TargetStudioArtifactData, noteContext: StudyContext) => {
+    const quranSource = artifact.sources.find((source) => source.id === 'quran');
+    if (!quranSource) throw new Error('Studio artifact is missing its Quran citation');
+    const quranReference = quranSource.label.match(/^Quran (\d+:\d+)$/)?.[1];
+    if (quranReference !== `${noteContext.surah_number}:${noteContext.ayah_number}`) {
+      throw new Error('Studio artifact Quran citation does not match the selected ayah');
+    }
+    const tafsirSource = artifact.sources.find((source) => source.id.startsWith('tafsir-'));
+    const sourceLabel = `Quran ${noteContext.surah_name} ${quranReference}`
+      + (tafsirSource ? `; ${tafsirSource.label}` : '');
+    const { data } = await apiClient.createNote({
+      title: artifact.artifact.title,
+      content: JSON.stringify(artifact),
+      surah_number: noteContext.surah_number,
+      ayah_number: noteContext.ayah_number,
+      source_label: sourceLabel,
+    });
+    queryClient.setQueryData<DataRecord[]>(['workspace', 'notes'], (notes = []) => [data, ...notes]);
+  };
   const toggleSource = (source: string) => {
     setSelectedSources((current) => current.includes(source)
       ? current.filter((value) => value !== source)
@@ -606,8 +658,9 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="border-b border-slate-200 px-5 py-4">
         <div className="mb-4 flex items-center gap-6 border-b border-slate-100 text-sm">
-          <button className="border-b-2 border-[#C9A227] pb-3 font-semibold text-[#073B32]">ตัฟซีร</button>
-          <button disabled title="ยังไม่เปิดใช้งาน" className="cursor-not-allowed pb-3 text-slate-400">เทียบทัศนะ</button>
+          <button type="button" onClick={() => setDialogueMode('tafsir')} className={`border-b-2 pb-3 ${dialogueMode === 'tafsir' ? 'border-[#C9A227] font-semibold text-[#073B32]' : 'border-transparent text-slate-500'}`}>ตัฟซีร</button>
+          <button type="button" onClick={() => setDialogueMode('explain')} className={`border-b-2 pb-3 ${dialogueMode === 'explain' ? 'border-[#C9A227] font-semibold text-[#073B32]' : 'border-transparent text-slate-500'}`}>ถาม AI</button>
+          <button type="button" onClick={() => setDialogueMode('compare')} className={`border-b-2 pb-3 ${dialogueMode === 'compare' ? 'border-[#C9A227] font-semibold text-[#073B32]' : 'border-transparent text-slate-500'}`}>เทียบหลักฐาน</button>
           <button disabled title="ยังไม่เปิดใช้งาน" className="cursor-not-allowed pb-3 text-slate-400">ทบทวน</button>
         </div>
         <p className="text-xs text-slate-500">บริบทที่เลือกไว้: {surahName} {surah}:{ayah}</p>
@@ -620,6 +673,7 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto p-5">
+        {dialogueMode === 'tafsir' && <>
         {tafsirStatus === 'idle' && <div className="rounded-xl border border-slate-200 p-4 text-sm leading-7 text-slate-500">กำลังเตรียมตัฟซีร {agents.find((item) => item.id === agent)?.label}...</div>}
         {tafsirStatus === 'loading' && <div className="animate-pulse rounded-xl border border-slate-200 p-4"><div className="h-3 w-2/3 rounded bg-slate-200" /><div className="mt-4 h-3 rounded bg-slate-100" /><div className="mt-2 h-3 w-4/5 rounded bg-slate-100" /><div className="mt-2 h-3 w-3/5 rounded bg-slate-100" /></div>}
         {tafsirStatus === 'error' && <div className="rounded-xl bg-amber-50 p-4 text-sm leading-7 text-amber-800">{error || 'โหลดตัฟซีรไม่สำเร็จ กรุณาลองใหม่'}</div>}
@@ -627,7 +681,7 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
           <div className="rounded-xl border border-slate-200 bg-white p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-xs font-bold text-slate-700">{stringOf(tafsirSource, 'scholar')}</h3>
-              <span className="text-[10px] text-slate-400">{tafsir.development_mode === true ? 'โหมดพัฒนา · Quran Foundation → PostgreSQL' : 'ต้นฉบับจากฐานข้อมูล'}</span>
+              <span className="text-[10px] text-slate-400">ต้นฉบับจาก Quran Foundation API</span>
             </div>
             <div className="rounded-xl border-l-4 border-[#0E5E4F] bg-[#F5F9F7] px-4 py-4">
               <p className="mb-2 text-[10px] font-bold tracking-wide text-[#0E5E4F]">คำแปลภาษาไทย</p>
@@ -635,12 +689,20 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
                 ? thaiTafsirParagraphs.map((paragraph, index) => <p key={index} className="whitespace-pre-line text-sm leading-8 text-slate-700 [&+p]:mt-3">{paragraph}</p>)
                 : <p className="text-sm leading-8 text-slate-500">ยังไม่มีคำแปลภาษาไทย</p>}
             </div>
-            {hasThaiTranslation && <p className="mt-3 border-t border-slate-100 pt-3 text-[10px] leading-5 text-slate-400">แปลด้วย OpenAI เพื่อช่วยในการศึกษา ควรตรวจเทียบกับต้นฉบับภาษาอาหรับ</p>}
+            {hasThaiTranslation && <p className="mt-3 border-t border-slate-100 pt-3 text-[10px] leading-5 text-slate-400">แปลด้วย AI เพื่อช่วยในการศึกษา ควรตรวจเทียบกับต้นฉบับ</p>}
             {translationError && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-800">{translationError}</p>}
           </div>
           <details className="rounded-xl border border-slate-200 bg-white p-4">
-            <summary className="cursor-pointer text-xs font-semibold text-slate-600">ดูต้นฉบับภาษาอาหรับ</summary>
-            <p dir="rtl" lang="ar" className={`${amiriQuran.className} mt-4 whitespace-pre-wrap text-right text-xl leading-[2.1] text-slate-800`}>{stringOf(tafsir, 'arabic_text')}</p>
+            <summary className="cursor-pointer text-xs font-semibold text-slate-600">
+              ดูต้นฉบับ{stringOf(tafsirSource, 'language_name') ? ` · ${stringOf(tafsirSource, 'language_name')}` : ''}
+            </summary>
+            <p
+              dir={isArabicTafsir ? 'rtl' : 'ltr'}
+              lang={isArabicTafsir ? 'ar' : 'en'}
+              className={`${isArabicTafsir ? `${amiriQuran.className} text-right text-xl leading-[2.1]` : 'text-left text-sm leading-7'} mt-4 whitespace-pre-wrap text-slate-800`}
+            >
+              {stringOf(tafsir, 'arabic_text')}
+            </p>
           </details>
           {tafsirSource && <div className="text-[10px] leading-5 text-slate-400">
             <span>{stringOf(tafsirSource, 'title')}</span>
@@ -648,6 +710,58 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
             {tafsirSource.page != null && <span> · หน้า {String(tafsirSource.page)}</span>}
             {stringOf(tafsirSource, 'url') && <a className="ml-1 underline" href={stringOf(tafsirSource, 'url')} target="_blank" rel="noreferrer">แหล่งที่มา</a>}
           </div>}
+        </div>}
+        </>}
+        {dialogueMode === 'explain' && <div className="space-y-4">
+          <form onSubmit={submitQuestion} className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3 sm:flex-row">
+            <label htmlFor="agent-question" className="sr-only">คำถามเกี่ยวกับอายะฮ์</label>
+            <input id="agent-question" value={questionDraft} onChange={(event) => setQuestionDraft(event.target.value)}
+              placeholder={`ถามเกี่ยวกับ ${surahName} ${surah}:${ayah}`}
+              className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#0E5E4F]" />
+            <button type="submit" disabled={!questionDraft.trim()} className="rounded-lg bg-[#0E5E4F] px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">ถาม</button>
+          </form>
+          {!submittedQuestion && <p className="text-xs leading-6 text-slate-500">คำตอบจะถูกสร้างจากแหล่งตัฟซีรที่ผ่านการอนุมัติเท่านั้น และจะแสดงที่มาของทุก citation</p>}
+          {explanationQuery.isFetching && <div className="animate-pulse rounded-xl border border-slate-200 bg-white p-4"><div className="h-3 w-2/3 rounded bg-slate-200" /><div className="mt-4 h-3 rounded bg-slate-100" /><div className="mt-2 h-3 w-4/5 rounded bg-slate-100" /></div>}
+          {explanationQuery.isError && <p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm leading-6 text-amber-800">{explanationQuery.error instanceof Error ? explanationQuery.error.message : 'ยังสร้างคำอธิบายที่อ้างอิงหลักฐานไม่ได้'}</p>}
+          {explanationQuery.data && Object.entries(explanationQuery.data.data.agent_outputs).map(([agentType, output]) => {
+            const explanation = typeof output.explanation === 'string'
+              ? output.explanation
+              : output.explanation && Object.values(output.explanation).filter((value): value is string => typeof value === 'string').join('\n\n');
+            const validation = explanationQuery.data.data.validation?.agent_validations[agentType];
+            return <article key={agentType} className="rounded-xl border border-slate-200 bg-white p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-bold text-slate-800">{agents.find((item) => item.id === agentType)?.label ?? agentType}</h3>
+                <EvidenceBadge status={validation?.evidence_level ?? output.evidence_level ?? 'UNVERIFIED'} />
+              </div>
+              {output.status === 'failed' || output.error
+                ? <p role="alert" className="mt-3 text-sm leading-6 text-amber-800">ไม่สามารถยืนยันคำตอบจากแหล่งที่อนุมัติได้: {output.error ?? 'การประมวลผลล้มเหลว'}</p>
+                : <p className="mt-3 whitespace-pre-line text-sm leading-7 text-slate-700">{explanation || 'ไม่มีคำอธิบายจากเอเจนต์'}</p>}
+              {validation && !validation.valid && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-800">คำตอบนี้ยังไม่ผ่านการตรวจสอบ: {validation.errors.join(' · ')}</p>}
+              {output.citations?.length ? <div className="mt-4 flex flex-wrap gap-2">
+                {output.citations.map((citation, index) => {
+                  const href = safeHttpUrl(citation.reference.url);
+                  const label = [
+                    citation.reference.scholar,
+                    citation.reference.book,
+                    citation.reference.volume && `เล่ม ${citation.reference.volume}`,
+                    citation.reference.page && `หน้า ${citation.reference.page}`,
+                  ].filter(Boolean).join(' · ') || `แหล่งอ้างอิง ${index + 1}`;
+                  return href
+                    ? <a key={`${citation.passage_id}-${index}`} href={href} target="_blank" rel="noreferrer"
+                      className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[10px] font-medium text-emerald-800 hover:bg-emerald-100">
+                      [{index + 1}] {label} · {citation.evidence_status}
+                    </a>
+                    : <span key={`${citation.passage_id}-${index}`} className="rounded-full bg-slate-100 px-3 py-1.5 text-[10px] text-slate-600">[{index + 1}] {label} · {citation.evidence_status}</span>;
+                })}
+              </div> : null}
+            </article>;
+          })}
+        </div>}
+        {dialogueMode === 'compare' && <div className="space-y-3">
+          <p className="text-xs leading-6 text-slate-500">แสดงความเห็นต่างได้เมื่อมีข้ออ้างจากนักวิชาการหลายท่านพร้อม citation ที่ตรวจสอบย้อนกลับได้ ระบบจะไม่อนุมานความเห็นต่างจากชื่อสำนักหรือข้อความที่ยังไม่มีหลักฐาน</p>
+          {comparisonQuery.isFetching && <div className="animate-pulse rounded-xl border border-slate-200 bg-white p-4"><div className="h-3 w-2/3 rounded bg-slate-200" /><div className="mt-4 h-3 rounded bg-slate-100" /></div>}
+          {comparisonQuery.isError && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-800">{comparisonQuery.error instanceof Error ? comparisonQuery.error.message : 'ยังไม่มีการเปรียบเทียบที่มีหลักฐานเพียงพอ'}</p>}
+          {!comparisonQuery.isFetching && !comparisonQuery.isError && !comparisonQuery.data && <p className="rounded-xl border border-slate-200 bg-white p-4 text-sm leading-6 text-slate-500">ยังไม่มีข้อมูลเปรียบเทียบที่ผ่านการตรวจสอบสำหรับอายะฮ์นี้</p>}
         </div>}
       </div>
       {tafsirStatus === 'error' && <div className="border-t border-slate-100 p-4">
@@ -849,7 +963,7 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
                     </button>
                     {selected && <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
                       <button type="button" onClick={() => { void saveNote(`${surahName} ${surah}:${ayah}`, [selectedArabic, translationsByAyah[ayah] ?? ''].filter(Boolean).join('\n\n'), studyContext).catch((failure: unknown) => setError(failure instanceof Error ? failure.message : 'บันทึกโน้ตไม่สำเร็จ')); }} className="rounded-lg px-3 py-2 text-[10px] font-semibold text-[#0E5E4F] hover:bg-[#E6F4F1]">Save to Note</button>
-                      <button type="button" onClick={() => setCenterView('dialogue')} className="rounded-lg px-3 py-2 text-[10px] font-semibold text-[#0E5E4F] hover:bg-[#E6F4F1]">Ask AI / Explain</button>
+                      <button type="button" onClick={openAiExplanation} className="rounded-lg px-3 py-2 text-[10px] font-semibold text-[#0E5E4F] hover:bg-[#E6F4F1]">Ask AI / Explain</button>
                       <button type="button" onClick={() => { if (audioRef.current) void audioRef.current.play(); }} disabled={!audioUrl} className="rounded-lg px-3 py-2 text-[10px] font-semibold text-[#0E5E4F] hover:bg-[#E6F4F1] disabled:cursor-not-allowed disabled:opacity-40">Listen Audio</button>
                     </div>}
                     {selected && audioUrl && <div className="rounded-xl border border-[#dce4e1] bg-white px-4 py-3">
@@ -869,27 +983,19 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
         </Panel>
         {studioOpen && <PanelResizeHandle className="w-1.5 bg-slate-100 transition hover:bg-[#0E5E4F]/30" />}
         {studioOpen && <Panel id="studio" defaultSize={visiblePanelLayout[visiblePanelLayout.length - 1]} minSize={23} maxSize={40} className="min-w-0 overflow-hidden border-l border-[#dce4e1]">
-          <StudioPanel context={studyContext} selectedSources={selectedSources} onSaveArtifact={saveNote} />
+          <StudioPanel context={studyContext} selectedSources={selectedSources} onSaveArtifact={saveNote} onSaveTargetArtifact={saveStudioArtifactNote} />
         </Panel>}
         </PanelGroup>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col lg:hidden">
-        <div className="flex shrink-0 items-center justify-center gap-1 border-b border-[#dce4e1] bg-white px-2 py-2">
-          {([
-            ['reader', 'อ่าน'],
-            ['sources', 'Sources'],
-            ['dialogue', 'ตัฟซีร'],
-            ['studio', 'Studio'],
-          ] as const).map(([view, label]) => <button key={view} type="button" onClick={() => setMobileView(view)}
-            className={`rounded-lg px-3 py-2 text-xs font-semibold ${mobileView === view ? 'bg-[#E6F4F1] text-[#0E5E4F]' : 'text-slate-500'}`}>{label}</button>)}
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <WorkspaceMobileTabs activeView={mobileView} onSelect={setMobileView} />
+        <div data-testid="mobile-view-content" className="min-h-0 flex-1 overflow-y-auto">
           {mobileView === 'reader' && renderReaderCanvas()}
           {mobileView === 'sources' && <SourcesPanel surahs={surahs} surah={surah} onSelectSurah={selectSurah} selectedSources={selectedSources}
             onToggleSource={toggleSource} tafsirApproved={tafsirApproved} context={studyContext} />}
           {mobileView === 'dialogue' && tafsirPanel}
-          {mobileView === 'studio' && <StudioPanel context={studyContext} selectedSources={selectedSources} onSaveArtifact={saveNote} />}
+          {mobileView === 'studio' && <StudioPanel context={studyContext} selectedSources={selectedSources} onSaveArtifact={saveNote} onSaveTargetArtifact={saveStudioArtifactNote} />}
         </div>
       </div>
 

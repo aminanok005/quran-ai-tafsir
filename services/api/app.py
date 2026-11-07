@@ -78,6 +78,7 @@ app.add_middleware(
 # Include routers
 app.include_router(quran.router, prefix="/api/v1")
 app.include_router(agents.router)
+app.include_router(agents.router, prefix="/api/v1/tafsir/agents", include_in_schema=False)
 app.include_router(tafsir.router, prefix="/api/v1")
 app.include_router(retrieval.router, prefix="/api/v1")
 app.include_router(workspace.router, prefix="/api/v1")

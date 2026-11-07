@@ -5,20 +5,25 @@ Validates Tafsir explanations for citation accuracy and evidence requirements.
 Implements comprehensive validation according to master-prompts-vibecoding.md guidelines.
 """
 
-from typing import Dict, List, Any, Optional
-from datetime import datetime
-import re
 import logging
-from sqlalchemy.orm import Session
-
-from ..models import EvidenceLevel
-from ..agents.base_agent import BaseTafsirAgent
+import re
+from datetime import datetime
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
 class CitationValidationError(Exception):
     """Exception raised for citation validation errors."""
     pass
+
+
+def _explanation_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return " ".join(item for item in value.values() if isinstance(item, str))
+    return ""
+
 
 class EvidenceValidationService:
     """Validates Tafsir explanations for religious accuracy and evidence requirements."""
@@ -127,14 +132,33 @@ class EvidenceValidationService:
         }
 
         # Check for required citation elements
-        if not any(source.get("book") or source.get("reference") for source in sources):
+        if not any(
+            source.get("book")
+            or source.get("reference")
+            or (
+                isinstance(source.get("reference"), dict)
+                and (
+                    source["reference"].get("book")
+                    or source["reference"].get("url")
+                )
+            )
+            for source in sources
+        ):
             validation["errors"].append("No source citations found")
             validation["score"] *= 0.5
 
         # Check for volume and page references
         source_with_volume_page = sum(
             1 for source in sources
-            if source.get("volume") or source.get("page")
+            if source.get("volume")
+            or source.get("page")
+            or (
+                isinstance(source.get("reference"), dict)
+                and (
+                    source["reference"].get("volume")
+                    or source["reference"].get("page")
+                )
+            )
         )
         if source_with_volume_page < len(sources) * 0.7:  # At least 70% have volume/page
             validation["warnings"].append("Some sources lack volume/page references")
@@ -236,18 +260,8 @@ class EvidenceValidationService:
         return validation
 
     def _determine_evidence_level(self, validation_result: Dict[str, Any]) -> str:
-        """Determine evidence level based on validation results."""
-
-        if validation_result["valid"] and validation_result["scores"].get("citation", 0) > 0.8:
-            return "VERIFIED"
-        elif validation_result["scores"].get("scholarly", 0) > 0.7:
-            return "SOURCE-ATTRIBUTED"
-        elif validation_result["warnings"] and "scholarly differences" in str(validation_result["warnings"]):
-            return "SCHOLARLY-DIFFERENCE"
-        elif validation_result["scores"]["content"] < 0.5:
-            return "UNVERIFIED"
-        else:
-            return "AI-SYNTHESIS"
+        """Do not infer source verification or scholarly disagreement from text heuristics."""
+        return "AI-SYNTHESIS" if validation_result["valid"] else "UNVERIFIED"
 
     def _generate_recommendations(
         self,
@@ -280,12 +294,32 @@ class EvidenceValidationService:
     ) -> Dict[str, Any]:
         """Validate a complete agent output including explanations and citations."""
 
-        explanation = agent_output.get("explanation", "")
+        explanation = _explanation_text(agent_output.get("explanation", ""))
         citations = agent_output.get("citations", [])
         scholar_name = agent_output.get("scholar", agent_type)
 
         # Validate the explanation
         validation_result = self.validate_explanation(explanation, citations, scholar_name, agent_type)
+
+        has_canonical_citations = bool(citations) and all(
+            isinstance(citation, dict)
+            and citation.get("evidence_status") == "VERIFIED"
+            and isinstance(citation.get("passage_id"), str)
+            and bool(citation["passage_id"])
+            and isinstance(citation.get("reference"), dict)
+            and str(citation["reference"].get("url", "")).startswith(("https://", "http://"))
+            for citation in citations
+        )
+        if not has_canonical_citations:
+            validation_result["errors"].append(
+                "No server-verified source citations found"
+            )
+            validation_result["valid"] = False
+            validation_result["evidence_level"] = "UNVERIFIED"
+        elif validation_result["valid"]:
+            validation_result["evidence_level"] = "SOURCE-ATTRIBUTED"
+        else:
+            validation_result["evidence_level"] = "UNVERIFIED"
 
         # Add agent-specific validation
         if agent_type == "ibn_kathir":
@@ -293,6 +327,7 @@ class EvidenceValidationService:
             if "I, Imam" in explanation or "I, Ibn Kathir" in explanation:
                 validation_result["errors"].append("Ibn Kathir agent should not roleplay")
                 validation_result["valid"] = False
+                validation_result["evidence_level"] = "UNVERIFIED"
 
         return validation_result
 
@@ -316,10 +351,16 @@ class EvidenceValidationService:
         }
 
         for agent_type, output in agent_outputs.items():
-            if "error" in output:
-                continue
-
-            validation_result = self.validate_agent_output(output, agent_type)
+            if "error" in output or output.get("status") == "failed":
+                validation_result = {
+                    "valid": False,
+                    "errors": ["Agent execution failed"],
+                    "warnings": [],
+                    "evidence_level": "UNVERIFIED",
+                    "validated_at": datetime.now().isoformat(),
+                }
+            else:
+                validation_result = self.validate_agent_output(output, agent_type)
             results["agent_validations"][agent_type] = validation_result
 
             if validation_result["valid"]:

@@ -10,7 +10,6 @@ import {
   FileText,
   Layers3,
   LoaderCircle,
-  Play,
   Plus,
   Save,
   Sparkles,
@@ -20,7 +19,21 @@ import {
 } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
-import { apiClient, StudyNote, StudioArtifactRequest } from '../../lib/api/client';
+import {
+  apiClient,
+  StudyNote,
+  StudioArtifactRequest,
+  StudioArtifactResponse,
+} from '../../lib/api/client';
+import { StudioArtifactView } from './StudioArtifactView';
+import { validateStudioArtifactEdit } from '../../lib/studio-artifact-validation';
+import type {
+  LegacyStudioArtifactData,
+  StudioArtifactEnvelope,
+  StudioArtifactSource,
+  TargetStudioArtifactData,
+  TargetStudioArtifactKind,
+} from '../../lib/api/client';
 
 type DataRecord = Record<string, unknown>;
 type ArtifactKind = StudioArtifactRequest['kind'];
@@ -67,6 +80,85 @@ function arrayOf(value: unknown): DataRecord[] {
 
 function stringOf(value: unknown, key: string): string {
   return isRecord(value) && typeof value[key] === 'string' ? value[key] : '';
+}
+
+function isTargetStudioArtifactKind(value: unknown): value is TargetStudioArtifactKind {
+  return value === 'audio' || value === 'quiz' || value === 'infographic';
+}
+
+function isLegacyStudioArtifactKind(value: unknown): value is LegacyStudioArtifactData['kind'] {
+  return value === 'report' || value === 'slides' || value === 'video'
+    || value === 'flashcards' || value === 'comparison';
+}
+
+function isStudioArtifactSource(value: unknown): value is StudioArtifactSource {
+  return isRecord(value)
+    && typeof value.id === 'string'
+    && value.id.length > 0
+    && typeof value.label === 'string'
+    && value.label.length > 0
+    && typeof value.url === 'string'
+    && value.url.startsWith('https://');
+}
+
+function isTargetStudioArtifactData(value: unknown): value is TargetStudioArtifactData {
+  if (
+    !isRecord(value)
+    || !isTargetStudioArtifactKind(value.kind)
+    || !isRecord(value.artifact)
+    || typeof value.artifact.title !== 'string'
+    || typeof value.artifact.summary !== 'string'
+    || !Array.isArray(value.sources)
+    || !value.sources.every(isStudioArtifactSource)
+    || !value.sources.some((source) => source.id === 'quran')
+    || value.evidence_status !== 'AI-SYNTHESIS'
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isLegacyStudioArtifactData(value: unknown): value is LegacyStudioArtifactData {
+  return isRecord(value)
+    && isLegacyStudioArtifactKind(value.kind)
+    && typeof value.title === 'string'
+    && typeof value.summary === 'string'
+    && ['sections', 'slides', 'scenes', 'questions', 'flashcards', 'rows', 'sources']
+      .every((key) => Array.isArray(value[key]))
+    && typeof value.evidence_status === 'string';
+}
+
+function isAudioStudioArtifact(artifact: StudioArtifactEnvelope): artifact is Extract<StudioArtifactEnvelope, { content: { segments: unknown[] } }> {
+  return 'segments' in artifact.content;
+}
+
+function isQuizStudioArtifact(artifact: StudioArtifactEnvelope): artifact is Extract<StudioArtifactEnvelope, { content: { questions: unknown[] } }> {
+  return 'questions' in artifact.content;
+}
+
+function isInfographicStudioArtifact(artifact: StudioArtifactEnvelope): artifact is Extract<StudioArtifactEnvelope, { content: { takeaway: string } }> {
+  return 'takeaway' in artifact.content;
+}
+
+function targetDataWithArtifact(
+  data: TargetStudioArtifactData,
+  artifact: StudioArtifactEnvelope,
+): TargetStudioArtifactData | null {
+  switch (data.kind) {
+    case 'audio':
+      return isAudioStudioArtifact(artifact) ? { ...data, artifact } : null;
+    case 'quiz':
+      return isQuizStudioArtifact(artifact) ? { ...data, artifact } : null;
+    case 'infographic':
+      return isInfographicStudioArtifact(artifact) ? { ...data, artifact } : null;
+  }
+}
+
+function normalizeTargetStudioArtifact(value: unknown): TargetStudioArtifactData | null {
+  if (!isTargetStudioArtifactData(value)) return null;
+  const validation = validateStudioArtifactEdit(value.kind, JSON.stringify(value.artifact));
+  if (!validation.valid) return null;
+  return targetDataWithArtifact(value, validation.artifact);
 }
 
 function ArtifactText({ artifact }: { artifact: DataRecord }) {
@@ -302,64 +394,137 @@ export function StudioPanel({
   context,
   selectedSources,
   onSaveArtifact,
+  onSaveTargetArtifact,
 }: {
   context: StudyContext;
   selectedSources: string[];
   onSaveArtifact: (title: string, content: string, context: StudyContext) => Promise<void>;
+  onSaveTargetArtifact: (data: TargetStudioArtifactData, context: StudyContext) => Promise<void>;
 }) {
   const [kind, setKind] = useState<ArtifactKind>('report');
-  const [artifact, setArtifact] = useState<DataRecord | null>(null);
+  const [artifact, setArtifact] = useState<StudioArtifactResponse['data'] | null>(null);
+  const [targetPreview, setTargetPreview] = useState<TargetStudioArtifactData | null>(null);
+  const [artifactContext, setArtifactContext] = useState<StudyContext | null>(null);
   const [editorText, setEditorText] = useState('');
   const [notice, setNotice] = useState('');
+  const [generationError, setGenerationError] = useState('');
+  const [actionError, setActionError] = useState('');
   const generate = useMutation({
-    mutationFn: (request: StudioArtifactRequest) => apiClient.createStudioArtifact(request),
-    onSuccess: ({ data }) => {
-      setArtifact(data);
-      setEditorText(JSON.stringify(data, null, 2));
+    mutationFn: ({ request }: { request: StudioArtifactRequest; context: StudyContext }) =>
+      apiClient.createStudioArtifact(request),
+    retry: false,
+    onSuccess: (response, variables) => {
+      const responseValue: unknown = response;
+      if (!isRecord(responseValue) || responseValue.success !== true) {
+        setGenerationError('AI returned an invalid Studio artifact');
+        return;
+      }
+
+      const responseData: unknown = responseValue.data;
+      if (isTargetStudioArtifactKind(isRecord(responseData) ? responseData.kind : null)) {
+        const validData = normalizeTargetStudioArtifact(responseData);
+        if (!validData) {
+          setGenerationError('AI returned an invalid Studio artifact');
+          return;
+        }
+        setArtifact(validData);
+        setTargetPreview(validData);
+        setEditorText(JSON.stringify({
+          title: validData.artifact.title,
+          summary: validData.artifact.summary,
+          content: validData.artifact.content,
+        }, null, 2));
+      } else if (isLegacyStudioArtifactData(responseData)) {
+        setArtifact(responseData);
+        setTargetPreview(null);
+        setEditorText(JSON.stringify(responseData, null, 2));
+      } else {
+        setGenerationError('AI returned an invalid Studio artifact');
+        return;
+      }
+      setArtifactContext(variables.context);
+      setGenerationError('');
+      setActionError('');
       setNotice('');
     },
   });
   const selectedKind = artifactOptions.find((option) => option.kind === kind);
+  const targetArtifact = artifact && 'artifact' in artifact ? artifact : null;
+  const targetEdit = useMemo(
+    () => targetArtifact ? validateStudioArtifactEdit(targetArtifact.kind, editorText) : null,
+    [editorText, targetArtifact],
+  );
+  const targetExportData = targetArtifact && targetEdit?.valid
+    ? targetDataWithArtifact(targetArtifact, targetEdit.artifact)
+    : null;
+  const targetEditError = targetArtifact && targetEdit && !targetEdit.valid
+    ? targetEdit.error
+    : targetArtifact && targetEdit?.valid && !targetExportData
+      ? 'Edited content does not match the generated artifact kind'
+      : '';
+  const updateEditorText = (value: string) => {
+    setEditorText(value);
+    setNotice('');
+    setActionError('');
+    if (!targetArtifact) return;
+
+    const validation = validateStudioArtifactEdit(targetArtifact.kind, value);
+    if (validation.valid) {
+      const preview = targetDataWithArtifact(targetArtifact, validation.artifact);
+      if (preview) setTargetPreview(preview);
+    }
+  };
   const generateArtifact = () => {
     setNotice('');
+    setGenerationError('');
+    setActionError('');
     generate.mutate({
-      kind,
-      surah_number: context.surah_number,
-      ayah_number: context.ayah_number,
-      surah_name: context.surah_name,
-      arabic_text: context.arabic_text,
-      translation: context.translation,
-      tafsir_book_id: context.tafsir_book_id,
-      selected_sources: selectedSources,
+      request: {
+        kind,
+        surah_number: context.surah_number,
+        ayah_number: context.ayah_number,
+        surah_name: context.surah_name,
+        arabic_text: context.arabic_text,
+        translation: context.translation,
+        tafsir_book_id: context.tafsir_book_id,
+        selected_sources: selectedSources,
+      },
+      context: { ...context },
     });
   };
   const downloadArtifact = () => {
-    const blob = new Blob([editorText], { type: 'application/json;charset=utf-8' });
+    const content = targetArtifact
+      ? targetExportData ? JSON.stringify(targetExportData, null, 2) : null
+      : editorText;
+    if (content === null) {
+      setActionError(targetEditError || 'Correct the artifact before exporting');
+      return;
+    }
+    const blob = new Blob([content], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `${kind}-${context.surah_number}-${context.ayah_number}.json`;
+    anchor.download = `${artifact?.kind ?? kind}-${context.surah_number}-${context.ayah_number}.json`;
     anchor.click();
     URL.revokeObjectURL(url);
   };
-  const playAudio = () => {
-    if (!('speechSynthesis' in window)) {
-      setNotice('เบราว์เซอร์นี้ไม่รองรับการอ่านออกเสียง');
-      return;
-    }
-    const sections = arrayOf(artifact?.sections);
-    const script = sections.map((section) => `${stringOf(section, 'heading')}. ${stringOf(section, 'text')}`).join('\n');
-    if (!script.trim()) {
-      setNotice('ยังไม่มีสคริปต์เสียงให้อ่าน');
-      return;
-    }
-    window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(new SpeechSynthesisUtterance(script));
-  };
   const saveArtifact = async () => {
     if (!artifact) return;
-    await onSaveArtifact(stringOf(artifact, 'title') || 'Studio artifact', editorText, context);
-    setNotice('บันทึกลง Personal Notes แล้ว');
+    setActionError('');
+    try {
+      if ('artifact' in artifact) {
+        if (!targetExportData || !artifactContext) {
+          setActionError(targetEditError || 'Correct the artifact before saving');
+          return;
+        }
+        await onSaveTargetArtifact(targetExportData, artifactContext);
+      } else {
+        await onSaveArtifact(artifact.title || 'Studio artifact', editorText, artifactContext ?? context);
+      }
+      setNotice('บันทึกลง Personal Notes แล้ว');
+    } catch (failure) {
+      setActionError(failure instanceof Error ? failure.message : 'บันทึก artifact ไม่สำเร็จ');
+    }
   };
 
   return (
@@ -382,7 +547,8 @@ export function StudioPanel({
           {generate.isPending ? <LoaderCircle size={15} className="animate-spin" /> : <Sparkles size={15} />}
           {generate.isPending ? 'กำลังสร้าง...' : `สร้าง ${selectedKind?.label ?? 'Artifact'}`}
         </button>
-        {generate.isError && <p role="alert" className="mt-2 rounded-lg bg-rose-50 p-2 text-[10px] leading-4 text-rose-700">{generate.error instanceof Error ? generate.error.message : 'สร้างสื่อไม่สำเร็จ'}</p>}
+        {(generate.isError || generationError) && <p role="alert" className="mt-2 rounded-lg bg-rose-50 p-2 text-[10px] leading-4 text-rose-700">{generationError || (generate.error instanceof Error ? generate.error.message : 'สร้างสื่อไม่สำเร็จ')}</p>}
+        {actionError && <p role="alert" className="mt-2 rounded-lg bg-rose-50 p-2 text-[10px] leading-4 text-rose-700">{actionError}</p>}
         {notice && <p role="status" className="mt-2 rounded-lg bg-emerald-50 p-2 text-[10px] text-emerald-800">{notice}</p>}
       </div>
       <div className="min-h-0 flex-1 border-t border-slate-200 p-3">
@@ -392,23 +558,35 @@ export function StudioPanel({
           <p className="mt-1 text-[10px] leading-5 text-slate-400">เลือกชนิดสื่อและสร้างจากอายะฮ์กับแหล่งข้อมูลที่ทำเครื่องหมายไว้</p>
         </div>}
         {artifact && <div>
-          <div className="mb-3 flex items-start justify-between gap-2">
-            <div><h3 className="text-sm font-bold text-[#073B32]">{stringOf(artifact, 'title')}</h3><p className="mt-1 text-[10px] leading-4 text-slate-500">{stringOf(artifact, 'summary')}</p></div>
-            <span className="shrink-0 rounded-full bg-violet-100 px-2 py-1 text-[8px] font-bold text-violet-700">AI-SYNTHESIS</span>
-          </div>
-          <p className="mb-2 flex items-center gap-1 text-[9px] text-slate-400"><span className="rounded-full bg-[#E6F4F1] px-2 py-0.5 text-[#0E5E4F]">[1] {context.surah_name} {context.surah_number}:{context.ayah_number}</span>{context.tafsir_approved && selectedSources.includes('tafsir') && <span className="rounded-full bg-[#E6F4F1] px-2 py-0.5 text-[#0E5E4F]">[2] {context.tafsir_source}</span>}</p>
-          <ArtifactText artifact={artifact} />
+          {'artifact' in artifact ? (
+            <StudioArtifactView data={targetPreview ?? artifact} />
+          ) : (
+            <>
+              <div className="mb-3 flex items-start justify-between gap-2">
+                <div><h3 className="text-sm font-bold text-[#073B32]">{artifact.title}</h3><p className="mt-1 text-[10px] leading-4 text-slate-500">{artifact.summary}</p></div>
+                <span className="shrink-0 rounded-full bg-violet-100 px-2 py-1 text-[8px] font-bold text-violet-700">{artifact.evidence_status}</span>
+              </div>
+              <p className="mb-2 flex items-center gap-1 text-[9px] text-slate-400"><span className="rounded-full bg-[#E6F4F1] px-2 py-0.5 text-[#0E5E4F]">[1] {context.surah_name} {context.surah_number}:{context.ayah_number}</span>{context.tafsir_approved && selectedSources.includes('tafsir') && <span className="rounded-full bg-[#E6F4F1] px-2 py-0.5 text-[#0E5E4F]">[2] {context.tafsir_source}</span>}</p>
+              <ArtifactText artifact={artifact} />
+            </>
+          )}
           <details className="mt-3 rounded-xl border border-slate-200 bg-white">
             <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-slate-600">แก้ไข artifact (JSON)</summary>
-            <textarea value={editorText} onChange={(event) => setEditorText(event.target.value)} aria-label="แก้ไข artifact JSON" rows={10} className="w-full resize-y border-t border-slate-100 p-3 font-mono text-[10px] leading-4 text-slate-600 outline-none" />
+            <textarea
+              value={editorText}
+              onChange={(event) => updateEditorText(event.target.value)}
+              aria-label="แก้ไข artifact JSON"
+              aria-invalid={Boolean(targetEditError)}
+              rows={10}
+              className="w-full resize-y border-t border-slate-100 p-3 font-mono text-[10px] leading-4 text-slate-600 outline-none"
+            />
+            {targetEditError && <p role="alert" className="border-t border-rose-100 bg-rose-50 px-3 py-2 text-[10px] leading-4 text-rose-700">{targetEditError}</p>}
           </details>
           <div className="mt-3 grid grid-cols-2 gap-2">
-            {kind === 'audio' && <button type="button" onClick={playAudio} className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-2 text-[10px] font-semibold text-[#0E5E4F]"><Play size={13} />อ่านสคริปต์</button>}
-            <button type="button" onClick={downloadArtifact} className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-2 text-[10px] font-semibold text-slate-600"><ArrowDownToLine size={13} />ส่งออก JSON</button>
-            <button type="button" onClick={() => void saveArtifact()} className="flex items-center justify-center gap-1.5 rounded-lg bg-[#E6F4F1] px-2 py-2 text-[10px] font-semibold text-[#0E5E4F]"><Save size={13} />Save to Note</button>
+            <button type="button" onClick={downloadArtifact} disabled={Boolean(targetArtifact && !targetExportData)} className="flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-2 text-[10px] font-semibold text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"><ArrowDownToLine size={13} />ส่งออก JSON</button>
+            <button type="button" onClick={() => void saveArtifact()} disabled={Boolean(targetArtifact && !targetExportData)} className="flex items-center justify-center gap-1.5 rounded-lg bg-[#E6F4F1] px-2 py-2 text-[10px] font-semibold text-[#0E5E4F] disabled:cursor-not-allowed disabled:opacity-50"><Save size={13} />Save to Note</button>
           </div>
           {kind === 'video' && <p className="mt-2 text-[9px] leading-4 text-slate-400">วิดีโอจัดทำเป็น storyboard; ไม่มีการเรนเดอร์ไฟล์วิดีโอจริง</p>}
-          {kind === 'audio' && <p className="mt-2 text-[9px] leading-4 text-slate-400">เสียงอ่านสร้างด้วย Speech Synthesis ของเบราว์เซอร์</p>}
         </div>}
       </div>
     </aside>
