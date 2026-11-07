@@ -13,8 +13,8 @@
     "lint": "bun --workspaces --if-present run lint",
     "typecheck": "bun --workspaces --if-present run typecheck",
     "test": "bun --workspaces --if-present run test",
-    "db:migrate": "cd services/api && python -m alembic upgrade head",
-    "db:seed": "cd services/api && python -m scripts.seed_data",
+    "db:migrate": "python3 -m alembic -c services/api/alembic.ini upgrade head",
+    "db:seed": "python3 -m scripts.seed_quran_data",
     "ingestion:run": "cd services/ingestion && bun run index"
   },
   "dependencies": {

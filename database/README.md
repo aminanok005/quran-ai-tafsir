@@ -1,6 +1,8 @@
 # Database
 
-PostgreSQL is the system of record. pgvector is an optional retrieval extension.
+PostgreSQL is the system of record. The current schema requires pgvector for
+tafsir embeddings; semantic retrieval additionally requires embedding-provider
+configuration.
 
 ## Local PostgreSQL with pgvector
 
@@ -30,6 +32,22 @@ The initial migration enables the `vector` extension. Verify it after migration:
 docker compose -f docker/docker-compose.yml exec db \
   psql -U quran_ai -d quran_ai -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
 ```
+
+## Seeding canonical Quran text
+
+The canonical seed command fetches all 6,236 ayahs, validates that the response
+is complete and has no duplicate ayah numbers, then upserts them into
+`quran_ayahs`.
+
+Set `QURAN_API_CLIENT_ID`, `QURAN_API_CLIENT_SECRET`, and `DATABASE_URL` in the
+process environment using your local secret-management method, then run:
+
+```bash
+bun run db:seed
+```
+
+The seeder uses the idempotent `(surah_number, ayah_number)` key. It must not be
+run against production without confirming the source license and target database.
 
 ## Schema Overview
 
