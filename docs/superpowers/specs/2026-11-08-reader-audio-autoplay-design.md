@@ -55,6 +55,10 @@ cancels and cleans up the previous audio and speech before beginning, including
 when the previous sequence is a single ayah of the same mode. No two audio or
 speech sequences may overlap.
 
+Single-ayah translation playback follows the same data readiness rule as Auto:
+wait for the selected edition's ayah text before speaking, and expose an error
+instead of starting if the request fails or that ayah has no translation.
+
 Speech translation uses the browser's Web Speech API and the selected
 translation text fetched from the existing Quran route. It is not presented as
 a scholarly recitation or a prerecorded translation. When a matching language
@@ -83,7 +87,9 @@ request before speaking and must not advance after cancellation.
 Select a browser voice only when its BCP-47 language tag has the requested
 primary language (`th`, `en`, or `id`), case-insensitively; locale variants
 such as `en-US` are acceptable. If `getVoices()` is initially empty, wait for
-`voiceschanged` for up to three seconds, then report that no matching voice is
+`voiceschanged` for up to three seconds. If an event yields voices but none
+match, keep listening until the deadline. Select the first matching voice from
+the browser's list; after the deadline, report that no matching voice is
 available. Do not select an unrelated default voice.
 
 If translation data is missing, its request fails, audio fails, or speech
@@ -96,8 +102,10 @@ Reader unmount so stale utterance callbacks cannot move the current ayah.
 
 Keep controls keyboard-operable with visible focus. Expose selected mode and
 language through labeled native controls, and announce playback progress,
-errors, and completion in a live status region. Ensure the compact control row
-wraps or stacks on narrow screens without obscuring ayah navigation.
+errors, and completion in a live status region. Announce playback start, each
+ayah advance once, stop/completion, and errors; do not announce the internal
+recitation-to-translation transition within one ayah. Ensure the compact
+control row wraps or stacks on narrow screens without obscuring ayah navigation.
 
 ## Boundaries
 
@@ -116,8 +124,11 @@ wraps or stacks on narrow screens without obscuring ayah navigation.
 - Test Auto's per-ayah sequence, selected-ayah scrolling, stop at surah end,
   interruption by manual navigation or settings changes, stale-event/result
   suppression, and cleanup.
+- Test that single-ayah translation playback waits for the selected translation
+  and fails clearly when it is unavailable.
 - Test missing/failed translations, audio failures, and unsupported speech
   synthesis, empty voice lists, language-voice timeouts, and non-matching
-  voices; each must stop playback and expose an error.
+  voices (including a later matching `voiceschanged` event); each unavailable
+  case must stop playback and expose an error.
 - Run the focused web tests, full web Jest suite, and TypeScript typecheck.
 - Verify desktop and mobile Reader controls in the local browser.
