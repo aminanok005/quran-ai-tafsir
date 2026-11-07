@@ -1,6 +1,7 @@
 import { Inter } from 'next/font/google';
 import type { Metadata } from 'next';
 import './globals.css';
+import Providers from './providers';
 
 // Import the font with custom subsets
 const inter = Inter({
@@ -63,7 +64,7 @@ export default function RootLayout({
       className={inter.className}
     >
       <body className="min-h-screen bg-slate-50 text-slate-900 antialiased">
-        {children}
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

@@ -66,6 +66,33 @@ development-only vector ingestion; they are not used as the Reader's Tafsir
 runtime fallback. Long approved passages are split into word-boundary chunks
 and translated in order.
 
+## Study workspace: Notes and Studio
+
+Apply the current database migrations before using saved notes:
+
+```bash
+DATABASE_URL=<development-database-url> \
+  python3 -m alembic -c services/api/alembic.ini upgrade head
+```
+
+`GET/POST /api/v1/workspace/notes` and `PATCH/DELETE
+/api/v1/workspace/notes/{id}` store personal notes in PostgreSQL. The API issues
+a random browser identity in a signed, HttpOnly cookie and scopes every query by
+that identity; notes are not shared across browsers or devices, and clearing the
+cookie loses access to that browser's notes. Configure a strong `SECRET_KEY`
+outside development. This anonymous browser identity is not a substitute for a
+user account or account recovery.
+
+`POST /api/v1/workspace/artifacts` creates a source-grounded Report, Slides,
+Video storyboard, Audio script, Flashcards, three-choice Quiz, Infographic, or
+Comparison table using the server-side LLM configuration above. Tafsir context
+is loaded server-side and included only when both the book and its source
+permission record are approved and verified; client-supplied approval flags or
+Tafsir text are never trusted. Quran citations are included with the generated
+content, which is labeled `AI-SYNTHESIS`. Audio uses the browser's speech
+synthesis; Video is an editable/exportable storyboard, not a rendered video
+file. Studio generation is limited to five requests per minute per browser.
+
 If translation returns HTTP 429 with an exhausted-credit/quota message, the
 configured provider account must have available API billing/usage quota before
 translation can succeed. This is separate from the ChatGPT subscription. A

@@ -9,6 +9,7 @@ from .routers import (
     quran_router,
     agents_router,
     tafsir_router,
+    workspace_router,
 )
 from .services import QuranAPIService, AgentOrchestratorService, EvidenceValidationService
 from .agents import (
@@ -59,6 +60,7 @@ __all__ = [
     "quran_router",
     "agents_router",
     "tafsir_router",
+    "workspace_router",
     
     # Services
     "QuranAPIService",

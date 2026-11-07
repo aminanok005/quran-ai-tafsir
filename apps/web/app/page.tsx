@@ -4,10 +4,15 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apiClient } from '../src/lib/api/client';
 import { amiriQuran, notoSansThai } from '../src/components/ui/fonts';
+import { useQueryClient } from '@tanstack/react-query';
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Sparkles } from 'lucide-react';
+import { SourcesPanel, StudioPanel, StudyContext } from '../src/components/workspace/WorkspacePanels';
 
 type DataRecord = Record<string, unknown>;
 type Status = 'idle' | 'loading' | 'success' | 'error' | 'empty';
 type CachedTafsir = { passage: DataRecord; translationError: string };
+type PanelSizes = { sources: number; reader: number; studio: number };
 
 const thaiTranslationCache = new Map<number, Promise<unknown>>();
 
@@ -280,6 +285,7 @@ function Workspace() {
 
 function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAyah: number }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [surahs, setSurahs] = useState<DataRecord[]>([]);
   const [surah, setSurah] = useState(initialSurah);
   const [ayah, setAyah] = useState(initialAyah);
@@ -298,11 +304,63 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
   const [translationError, setTranslationError] = useState('');
   const [search, setSearch] = useState('');
   const [arabicFontSize, setArabicFontSize] = useState(36);
-  const [mobilePanelOpen, setMobilePanelOpen] = useState(false);
   const [mobileSurahMenuOpen, setMobileSurahMenuOpen] = useState(false);
+  const [mobileView, setMobileView] = useState<'reader' | 'sources' | 'dialogue' | 'studio'>('reader');
+  const [centerView, setCenterView] = useState<'reader' | 'dialogue'>('reader');
+  const [sourcesOpen, setSourcesOpen] = useState(true);
+  const [studioOpen, setStudioOpen] = useState(true);
+  const [selectedSources, setSelectedSources] = useState<string[]>(['quran']);
+  const [panelLayout, setPanelLayout] = useState<PanelSizes>({ sources: 24, reader: 49, studio: 27 });
+  const audioRef = useRef<HTMLAudioElement>(null);
   const tafsirCache = useRef(new Map<string, CachedTafsir>());
   const tafsirRequests = useRef(new Map<string, Promise<CachedTafsir>>());
   const activeTafsirKey = useRef(`${initialSurah}:${initialAyah}:${agents[0].id}`);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem('quran-workspace-layout');
+    if (!saved) return;
+    try {
+      const state: unknown = JSON.parse(saved);
+      if (!isRecord(state)) return;
+      if (typeof state.sourcesOpen === 'boolean') setSourcesOpen(state.sourcesOpen);
+      if (typeof state.studioOpen === 'boolean') setStudioOpen(state.studioOpen);
+      if (isRecord(state.panelLayout)) {
+        const values = Object.fromEntries(
+          Object.entries(state.panelLayout).filter((entry): entry is [string, number] =>
+            typeof entry[1] === 'number' && Number.isFinite(entry[1]) && entry[1] > 0),
+        );
+        if (Object.keys(values).length) setPanelLayout((current) => ({ ...current, ...values }));
+      }
+    } catch (failure) {
+      console.warn('Ignoring invalid saved workspace layout', failure);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem('quran-workspace-layout', JSON.stringify({
+      sourcesOpen,
+      studioOpen,
+      panelLayout,
+    }));
+  }, [panelLayout, sourcesOpen, studioOpen]);
+
+  useEffect(() => {
+    const onShortcut = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (target instanceof HTMLElement && (
+        target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
+      )) return;
+      if (event.key === '[') {
+        event.preventDefault();
+        setSourcesOpen((open) => !open);
+      } else if (event.key === ']') {
+        event.preventDefault();
+        setStudioOpen((open) => !open);
+      }
+    };
+    window.addEventListener('keydown', onShortcut);
+    return () => window.removeEventListener('keydown', onShortcut);
+  }, []);
 
   useEffect(() => {
     setSurah(initialSurah);
@@ -499,6 +557,50 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
   const thaiTafsirParagraphs = translationParagraphs(stringOf(tafsir, 'thai_translation'));
   const selectedArabic = textOf(ayahs.find((item) => numberOf(item, 0) === ayah));
   const audioUrl = audioByAyah[ayah] ?? '';
+  const tafsirApproved = tafsir?.translation_allowed === true;
+  const visiblePanelLayout = useMemo<number[]>(() => {
+    const sourceSize = panelLayout.sources ?? 24;
+    const readerSize = panelLayout.reader ?? 49;
+    const studioSize = panelLayout.studio ?? 27;
+    if (sourcesOpen && studioOpen) {
+      return [sourceSize, readerSize, studioSize];
+    }
+    if (sourcesOpen) {
+      const total = sourceSize + readerSize;
+      return [(sourceSize / total) * 100, (readerSize / total) * 100];
+    }
+    if (studioOpen) {
+      const total = readerSize + studioSize;
+      return [(readerSize / total) * 100, (studioSize / total) * 100];
+    }
+    return [100];
+  }, [panelLayout, sourcesOpen, studioOpen]);
+  const studyContext: StudyContext = {
+    surah_number: surah,
+    ayah_number: ayah,
+    surah_name: surahName,
+    arabic_text: selectedArabic,
+    translation: translationsByAyah[ayah] ?? '',
+    tafsir_text: tafsirApproved ? stringOf(tafsir, 'arabic_text') : '',
+    tafsir_approved: tafsirApproved,
+    tafsir_source: stringOf(tafsirSource, 'title') || '',
+    tafsir_book_id: tafsirSource && typeof tafsirSource.book_id === 'string' ? tafsirSource.book_id : null,
+  };
+  const saveNote = async (title: string, content: string, noteContext: StudyContext) => {
+    const { data } = await apiClient.createNote({
+      title,
+      content,
+      surah_number: noteContext.surah_number,
+      ayah_number: noteContext.ayah_number,
+      source_label: noteContext.tafsir_approved ? noteContext.tafsir_source : 'อัลกุรอาน',
+    });
+    queryClient.setQueryData<DataRecord[]>(['workspace', 'notes'], (notes = []) => [data, ...notes]);
+  };
+  const toggleSource = (source: string) => {
+    setSelectedSources((current) => current.includes(source)
+      ? current.filter((value) => value !== source)
+      : [...current, source]);
+  };
 
   const tafsirPanel = (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -554,8 +656,90 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
     </div>
   );
 
+  const renderReaderCanvas = () => (
+    <section className="min-h-0 overflow-y-auto px-4 pb-8 pt-5 md:px-8 lg:px-6 lg:pt-7 xl:px-9">
+      <style>{qpcFontPages.map((page) => `@font-face{font-family:"QpcV4Page${page}";src:url("https://static-cdn.tarteel.ai/qul/fonts/quran_fonts/v4/woff2/p${page}.woff2") format("woff2");font-display:swap}`).join('\n')}</style>
+      <div className="mx-auto max-w-4xl">
+        <div className="mb-5 flex items-center justify-between gap-4">
+          <div><h1 className="text-xl font-bold text-[#073B32] md:text-2xl">{surahName}</h1><p className="mt-1 text-sm text-slate-500">{surahName} · {safeAyahCount || '—'} อายะฮ์</p></div>
+        </div>
+        <div className="mb-4 rounded-2xl border border-[#dce4e1] bg-white p-4 shadow-[0_6px_20px_rgba(21,44,37,.04)]">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="truncate text-sm font-bold text-[#073B32]">อายะฮ์ {ayah}</h2>
+              <p className="mt-1 text-[10px] text-slate-500">จากทั้งหมด {safeAyahCount || '—'} อายะฮ์</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1 rounded-xl border border-slate-200 bg-[#F8FAF9] p-1" aria-label="ปรับขนาดอักษรอาหรับ">
+              <button type="button" aria-label="ลดขนาดอักษรอาหรับ" disabled={arabicFontSize <= 28} onClick={() => setArabicFontSize((size) => Math.max(size - 4, 28))} className="grid h-8 w-8 place-items-center rounded-lg text-xs font-semibold text-slate-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-40">A−</button>
+              <span className="min-w-8 text-center text-[10px] tabular-nums text-slate-400">{arabicFontSize}</span>
+              <button type="button" aria-label="เพิ่มขนาดอักษรอาหรับ" disabled={arabicFontSize >= 52} onClick={() => setArabicFontSize((size) => Math.min(size + 4, 52))} className="grid h-8 w-8 place-items-center rounded-lg text-xs font-semibold text-slate-600 hover:bg-white disabled:cursor-not-allowed disabled:opacity-40">A+</button>
+            </div>
+          </div>
+          <div className="mt-3 flex items-center gap-3">
+            <button type="button" aria-label="อายะฮ์ก่อนหน้า" disabled={ayah <= 1} onClick={() => selectAyah(ayah - 1)} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[#d6e0dc] text-lg text-[#0E5E4F] transition hover:bg-[#E6F4F1] disabled:cursor-not-allowed disabled:opacity-40">‹</button>
+            <div className="min-w-0 flex-1">
+              <div className="mb-1.5 flex items-center justify-between text-[10px] font-medium text-slate-500">
+                <span>ตำแหน่งที่อ่าน</span>
+                <span className="tabular-nums">{ayah} / {safeAyahCount || '—'}</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-[#E6F4F1]" role="progressbar" aria-label="ความคืบหน้าในซูเราะฮ์" aria-valuemin={0} aria-valuemax={safeAyahCount || undefined} aria-valuenow={ayah}>
+                <div className="h-full rounded-full bg-[#0E5E4F] transition-[width]" style={{ width: `${readingProgress}%` }} />
+              </div>
+            </div>
+            <button type="button" aria-label="อายะฮ์ถัดไป" disabled={Boolean(safeAyahCount && ayah >= safeAyahCount)} onClick={() => selectAyah(ayah + 1)} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[#d6e0dc] text-lg text-[#0E5E4F] transition hover:bg-[#E6F4F1] disabled:cursor-not-allowed disabled:opacity-40">›</button>
+          </div>
+        </div>
+        <label className="mb-4 flex items-center gap-3 rounded-xl border border-[#d6e0dc] bg-white px-4 py-3 text-slate-500 md:hidden">
+          <Icon name="search" className="h-4 w-4 shrink-0" />
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ค้นหาอายะฮ์ หรือคำสำคัญ" className="w-full bg-transparent text-sm outline-none placeholder:text-slate-500" />
+        </label>
+
+        {contentStatus === 'loading' && <div className="space-y-4" aria-label="กำลังโหลดอายะฮ์"><div className="h-48 animate-pulse rounded-2xl bg-slate-200" /><div className="h-48 animate-pulse rounded-2xl bg-slate-200" /></div>}
+        {contentStatus === 'error' && <div className="rounded-2xl border border-amber-200 bg-white p-6 text-center shadow-[0_6px_20px_rgba(21,44,37,.04)]"><span className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-amber-50 text-lg text-amber-700">!</span><h2 className="mt-3 text-sm font-bold text-slate-800">ยังโหลดอายะฮ์ไม่ได้</h2><p className="mt-2 text-xs leading-6 text-slate-500">{error || 'ตรวจสอบการเชื่อมต่อ API แล้วลองใหม่'}</p><button onClick={() => selectAyah(ayah)} className="mt-4 rounded-xl bg-[#0E5E4F] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[#073B32]">ลองโหลดอีกครั้ง</button></div>}
+        {contentStatus === 'empty' && <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">ไม่พบข้อมูลอายะฮ์นี้</div>}
+        {contentStatus === 'success' && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between px-1 text-[10px] text-slate-400">
+              <span>{search.trim() ? `พบ ${filteredAyahs.length} อายะฮ์` : 'ข้อความอัลกุรอาน · QPC v4'}</span>
+              <span>แสดง {filteredAyahs.length} จาก {ayahs.length}</span>
+            </div>
+            {filteredAyahs.map((item) => {
+              const id = numberOf(item, 0);
+              const selected = id === ayah;
+              const verse = selected ? selectedArabic : textOf(item);
+              const verseTranslation = translationsByAyah[id] ?? '';
+              return <article key={id} className="space-y-2">
+                <button type="button" aria-current={selected ? 'location' : undefined} onClick={() => selectAyah(id)} className={`group block w-full rounded-2xl border p-5 text-left transition md:p-6 ${selected ? 'border-[#0E5E4F] bg-[#E6F4F1] shadow-[0_8px_24px_rgba(14,94,79,.08)]' : 'border-[#dce4e1] bg-white hover:border-[#9bbdb3] hover:bg-[#fbfdfc]'}`}>
+                  <div className="flex items-center justify-between text-xs font-semibold text-slate-500"><span className={`grid h-8 min-w-8 place-items-center rounded-full px-2 tabular-nums ${selected ? 'bg-[#0E5E4F] text-white' : 'bg-slate-100 text-slate-500 group-hover:bg-[#E6F4F1] group-hover:text-[#0E5E4F]'}`}>{id}</span>{selected && <span className="rounded-full bg-white/80 px-2.5 py-1 text-[10px] text-[#0E5E4F]">อายะฮ์ที่เลือก</span>}</div>
+                  <p className={`${amiriQuran.className} mt-5 text-right leading-[2.1] text-slate-900`} style={{ fontSize: `${arabicFontSize}px`, fontFamily: `QpcV4Page${item.page_number}, ${amiriQuran.style.fontFamily}` }} dir="rtl" lang="ar">{verse || 'ไม่มีข้อความอาหรับจากแหล่งข้อมูล'}</p>
+                  {verseTranslation
+                    ? <span className="mt-4 block rounded-xl border-l-2 border-[#0E5E4F]/40 bg-white/70 px-3 py-3 text-left">
+                      <span className="mb-1 block text-[10px] font-semibold text-[#0E5E4F]">คำแปลไทย</span>
+                      <span className="block whitespace-pre-line text-sm leading-7 text-slate-700">{verseTranslation}</span>
+                    </span>
+                    : <p className={`mt-4 border-t pt-4 text-xs leading-6 ${ayahTranslationError ? 'border-amber-200 text-amber-700' : 'border-[#0E5E4F]/10 text-slate-400'}`}>{translationStatus === 'loading' ? 'กำลังโหลดคำแปลภาษาไทย...' : ayahTranslationError ? `ยังโหลดคำแปลภาษาไทยไม่ได้: ${ayahTranslationError}` : 'ไม่มีคำแปลภาษาไทยสำหรับอายะฮ์นี้'}</p>}
+                </button>
+                {selected && <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
+                  <button type="button" onClick={() => { void saveNote(`${surahName} ${surah}:${ayah}`, [selectedArabic, translationsByAyah[ayah] ?? ''].filter(Boolean).join('\n\n'), studyContext).catch((failure: unknown) => setError(failure instanceof Error ? failure.message : 'บันทึกโน้ตไม่สำเร็จ')); }} className="rounded-lg px-3 py-2 text-[10px] font-semibold text-[#0E5E4F] hover:bg-[#E6F4F1]">Save to Note</button>
+                  <button type="button" onClick={() => { setCenterView('dialogue'); setMobileView('dialogue'); }} className="rounded-lg px-3 py-2 text-[10px] font-semibold text-[#0E5E4F] hover:bg-[#E6F4F1]">Ask AI / Explain</button>
+                  <button type="button" onClick={() => { if (audioRef.current) void audioRef.current.play(); }} disabled={!audioUrl} className="rounded-lg px-3 py-2 text-[10px] font-semibold text-[#0E5E4F] hover:bg-[#E6F4F1] disabled:cursor-not-allowed disabled:opacity-40">Listen Audio</button>
+                </div>}
+                {selected && audioUrl && <div className="rounded-xl border border-[#dce4e1] bg-white px-4 py-3">
+                  <p className="mb-2 text-xs font-medium text-slate-500">เสียงอ่าน · อัลอะฟาซี</p>
+                  <audio ref={audioRef} key={audioUrl} controls preload="none" src={audioUrl} aria-label={`เสียงอ่านอายะฮ์ ${surah}:${ayah} โดยอัลอะฟาซี`} className="h-10 w-full" />
+                </div>}
+                {selected && audioError && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">ยังโหลดเสียงอ่านไม่ได้: {audioError}</p>}
+              </article>;
+            })}
+            {filteredAyahs.length === 0 && <p className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-500">ไม่พบอายะฮ์ที่ตรงกับคำค้น</p>}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+
   return (
-    <main className={`${notoSansThai.className} flex min-h-dvh flex-col bg-[#F5F7F6] text-[#1E293B]`}>
+    <main className={`${notoSansThai.className} flex h-dvh flex-col overflow-hidden bg-[#F5F7F6] text-[#1E293B]`}>
       <header className="z-20 flex h-[68px] shrink-0 items-center justify-between gap-4 border-b border-[#dce4e1] bg-white px-4 lg:h-[76px] lg:px-7">
         <div className="flex min-w-0 items-center gap-3 lg:min-w-[190px]">
           <button type="button" aria-label="เปิดเมนูซูเราะฮ์" aria-expanded={mobileSurahMenuOpen} aria-controls="mobile-surah-menu" onClick={() => setMobileSurahMenuOpen(true)} className="rounded-lg p-2 text-[#073B32] hover:bg-slate-50 lg:hidden"><Icon name="menu" /></button>
@@ -566,30 +750,42 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
           <Icon name="search" className="h-4 w-4 shrink-0" />
           <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ค้นหาอายะฮ์ เช่น 2:255 หรือคำสำคัญ" className="w-full bg-transparent text-sm outline-none placeholder:text-slate-500" />
         </label>
-        <div className="flex min-w-0 justify-end gap-3 sm:min-w-[190px]">
+        <div className="flex min-w-0 items-center justify-end gap-2 sm:min-w-[190px]">
+          <div className="hidden items-center gap-1 lg:flex">
+            <button type="button" onClick={() => setSourcesOpen((open) => !open)} aria-label={sourcesOpen ? 'ย่อแผง Sources' : 'เปิดแผง Sources'} title="Sources · ["
+              className="rounded-lg p-2 text-slate-500 hover:bg-slate-100">{sourcesOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}</button>
+            <button type="button" onClick={() => setStudioOpen((open) => !open)} aria-label={studioOpen ? 'ย่อแผง Studio' : 'เปิดแผง Studio'} title="Studio · ]"
+              className="rounded-lg p-2 text-slate-500 hover:bg-slate-100">{studioOpen ? <PanelRightClose size={17} /> : <PanelRightOpen size={17} />}</button>
+          </div>
           <span className="hidden items-center rounded-full border border-[#efdfaa] bg-[#FEF9E7] px-4 py-2 text-xs font-semibold text-[#80640e] sm:inline-flex">สตรีค [N] วัน</span>
           <button aria-label="โปรไฟล์" className="grid h-10 w-10 place-items-center rounded-full bg-[#E6F4F1] text-sm font-bold text-[#0E5E4F]">ผ</button>
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 lg:grid-cols-[260px_minmax(0,1fr)_420px]">
-        <aside className="hidden min-h-0 overflow-y-auto border-r border-[#dce4e1] bg-white p-5 lg:block">
-          <h2 className="mb-4 px-2 text-xs font-bold tracking-wide text-slate-500">ซูเราะฮ์</h2>
-          <nav className="space-y-1">
-            {surahStatus === 'loading' && <p className="px-3 py-2 text-sm text-slate-400">กำลังโหลด...</p>}
-            {surahStatus === 'error' && <p className="px-3 py-2 text-sm text-red-600">โหลดสารบัญไม่สำเร็จ</p>}
-            {surahs.map((item) => {
-              const id = numberOf(item, 0);
-              const name = stringOf(item, 'name_th', 'name_simple', 'transliteration', 'name') || 'ไม่ทราบชื่อ';
-              return <button key={id} onClick={() => selectSurah(id)} className={`flex w-full items-center gap-2 rounded-xl px-3 py-3 text-left text-sm transition ${id === surah ? 'bg-[#E6F4F1] font-semibold text-[#073B32]' : 'text-slate-700 hover:bg-slate-50'}`}><span className="text-xs text-slate-400">{id} ·</span>{name}</button>;
-            })}
-          </nav>
-          <div className="my-5 border-t border-slate-200" />
-          <h2 className="mb-2 px-2 text-xs font-bold tracking-wide text-slate-500">คลังของฉัน</h2>
-          {['บุ๊กมาร์ก', 'แฟลชการ์ด', 'คอร์สเรียน', 'เอกสาร PDF'].map((item) => <button disabled key={item} title="ยังไม่เปิดใช้งาน" className="block w-full cursor-not-allowed rounded-lg px-3 py-3 text-left text-sm text-slate-400">{item}</button>)}
-        </aside>
+      <div className="hidden min-h-0 flex-1 lg:flex">
+        <PanelGroup key={`${sourcesOpen}-${studioOpen}`} direction="horizontal"
+          onLayout={(sizes) => setPanelLayout((current) => ({
+            ...current,
+            ...(sourcesOpen ? { sources: sizes[0] } : {}),
+            reader: sizes[sourcesOpen ? 1 : 0],
+            ...(studioOpen ? { studio: sizes[sizes.length - 1] } : {}),
+          }))}
+          className="min-h-0 flex-1">
+        {sourcesOpen && <Panel id="sources" defaultSize={visiblePanelLayout[0]} minSize={18} maxSize={34} className="min-w-0 overflow-hidden border-r border-[#dce4e1]">
+          <SourcesPanel surahs={surahs} surah={surah} onSelectSurah={selectSurah} selectedSources={selectedSources}
+            onToggleSource={toggleSource} tafsirApproved={tafsirApproved} context={studyContext} />
+        </Panel>}
+        {sourcesOpen && <PanelResizeHandle className="w-1.5 bg-slate-100 transition hover:bg-[#0E5E4F]/30" />}
 
-        <section className="min-h-0 overflow-y-auto px-4 pb-[24rem] pt-5 md:px-8 md:pb-10 lg:px-6 lg:pt-7 xl:px-9">
+        <Panel id="reader" defaultSize={visiblePanelLayout[sourcesOpen ? 1 : 0]} minSize={34} className="min-w-0 overflow-hidden bg-[#F5F7F6]">
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="flex shrink-0 items-center gap-1 border-b border-[#dce4e1] bg-white px-5 pt-2">
+              <button type="button" onClick={() => setCenterView('reader')} className={`border-b-2 px-3 py-2 text-xs font-semibold ${centerView === 'reader' ? 'border-[#C9A227] text-[#073B32]' : 'border-transparent text-slate-400'}`}>Reader</button>
+              <button type="button" onClick={() => setCenterView('dialogue')} className={`border-b-2 px-3 py-2 text-xs font-semibold ${centerView === 'dialogue' ? 'border-[#C9A227] text-[#073B32]' : 'border-transparent text-slate-400'}`}>Grounded dialogue</button>
+              <span className="ml-auto hidden items-center gap-1 text-[9px] text-slate-400 xl:flex"><Sparkles size={12} /> AI-SYNTHESIS จะแยกจากหลักฐานต้นฉบับ</span>
+            </div>
+            {centerView === 'reader' ? (
+        <section className="min-h-0 overflow-y-auto px-4 pb-10 pt-5 md:px-8 lg:px-6 lg:pt-7 xl:px-9">
           <style>{qpcFontPages.map((page) => `@font-face{font-family:"QpcV4Page${page}";src:url("https://static-cdn.tarteel.ai/qul/fonts/quran_fonts/v4/woff2/p${page}.woff2") format("woff2");font-display:swap}`).join('\n')}</style>
           <div className="mx-auto max-w-4xl">
             <div className="mb-5 flex items-center justify-between gap-4">
@@ -651,9 +847,14 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
                         </span>
                         : <p className={`mt-4 border-t pt-4 text-xs leading-6 ${ayahTranslationError ? 'border-amber-200 text-amber-700' : 'border-[#0E5E4F]/10 text-slate-400'}`}>{translationStatus === 'loading' ? 'กำลังโหลดคำแปลภาษาไทย...' : ayahTranslationError ? `ยังโหลดคำแปลภาษาไทยไม่ได้: ${ayahTranslationError}` : 'ไม่มีคำแปลภาษาไทยสำหรับอายะฮ์นี้'}</p>}
                     </button>
+                    {selected && <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
+                      <button type="button" onClick={() => { void saveNote(`${surahName} ${surah}:${ayah}`, [selectedArabic, translationsByAyah[ayah] ?? ''].filter(Boolean).join('\n\n'), studyContext).catch((failure: unknown) => setError(failure instanceof Error ? failure.message : 'บันทึกโน้ตไม่สำเร็จ')); }} className="rounded-lg px-3 py-2 text-[10px] font-semibold text-[#0E5E4F] hover:bg-[#E6F4F1]">Save to Note</button>
+                      <button type="button" onClick={() => setCenterView('dialogue')} className="rounded-lg px-3 py-2 text-[10px] font-semibold text-[#0E5E4F] hover:bg-[#E6F4F1]">Ask AI / Explain</button>
+                      <button type="button" onClick={() => { if (audioRef.current) void audioRef.current.play(); }} disabled={!audioUrl} className="rounded-lg px-3 py-2 text-[10px] font-semibold text-[#0E5E4F] hover:bg-[#E6F4F1] disabled:cursor-not-allowed disabled:opacity-40">Listen Audio</button>
+                    </div>}
                     {selected && audioUrl && <div className="rounded-xl border border-[#dce4e1] bg-white px-4 py-3">
                       <p className="mb-2 text-xs font-medium text-slate-500">เสียงอ่าน · อัลอะฟาซี</p>
-                      <audio key={audioUrl} controls preload="none" src={audioUrl} aria-label={`เสียงอ่านอายะฮ์ ${surah}:${ayah} โดยอัลอะฟาซี`} className="h-10 w-full" />
+                      <audio ref={audioRef} key={audioUrl} controls preload="none" src={audioUrl} aria-label={`เสียงอ่านอายะฮ์ ${surah}:${ayah} โดยอัลอะฟาซี`} className="h-10 w-full" />
                     </div>}
                     {selected && audioError && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">ยังโหลดเสียงอ่านไม่ได้: {audioError}</p>}
                   </article>;
@@ -663,13 +864,33 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
             )}
           </div>
         </section>
-
-        <aside className="hidden min-h-0 flex-col border-l border-[#dce4e1] bg-white lg:flex">{tafsirPanel}</aside>
+            ) : <div className="min-h-0 flex-1 overflow-y-auto bg-white">{tafsirPanel}</div>}
+          </div>
+        </Panel>
+        {studioOpen && <PanelResizeHandle className="w-1.5 bg-slate-100 transition hover:bg-[#0E5E4F]/30" />}
+        {studioOpen && <Panel id="studio" defaultSize={visiblePanelLayout[visiblePanelLayout.length - 1]} minSize={23} maxSize={40} className="min-w-0 overflow-hidden border-l border-[#dce4e1]">
+          <StudioPanel context={studyContext} selectedSources={selectedSources} onSaveArtifact={saveNote} />
+        </Panel>}
+        </PanelGroup>
       </div>
 
-      <div className={`fixed inset-x-0 bottom-[64px] z-20 flex max-h-[48dvh] flex-col rounded-t-[22px] border-t border-slate-200 bg-white shadow-[0_-12px_36px_rgba(21,44,37,.12)] transition-transform lg:hidden ${mobilePanelOpen ? 'translate-y-0' : 'translate-y-[calc(100%-24px)]'}`}>
-        <button aria-label={mobilePanelOpen ? 'ย่อแผงตัฟซีร' : 'ขยายแผงตัฟซีร'} onClick={() => setMobilePanelOpen(!mobilePanelOpen)} className="flex h-7 shrink-0 items-center justify-center"><span className="h-1 w-10 rounded-full bg-slate-300" /></button>
-        {tafsirPanel}
+      <div className="flex min-h-0 flex-1 flex-col lg:hidden">
+        <div className="flex shrink-0 items-center justify-center gap-1 border-b border-[#dce4e1] bg-white px-2 py-2">
+          {([
+            ['reader', 'อ่าน'],
+            ['sources', 'Sources'],
+            ['dialogue', 'ตัฟซีร'],
+            ['studio', 'Studio'],
+          ] as const).map(([view, label]) => <button key={view} type="button" onClick={() => setMobileView(view)}
+            className={`rounded-lg px-3 py-2 text-xs font-semibold ${mobileView === view ? 'bg-[#E6F4F1] text-[#0E5E4F]' : 'text-slate-500'}`}>{label}</button>)}
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {mobileView === 'reader' && renderReaderCanvas()}
+          {mobileView === 'sources' && <SourcesPanel surahs={surahs} surah={surah} onSelectSurah={selectSurah} selectedSources={selectedSources}
+            onToggleSource={toggleSource} tafsirApproved={tafsirApproved} context={studyContext} />}
+          {mobileView === 'dialogue' && tafsirPanel}
+          {mobileView === 'studio' && <StudioPanel context={studyContext} selectedSources={selectedSources} onSaveArtifact={saveNote} />}
+        </div>
       </div>
 
       {mobileSurahMenuOpen && <div className="fixed inset-0 z-40 lg:hidden">
@@ -696,12 +917,6 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
         </aside>
       </div>}
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 grid h-16 grid-cols-4 border-t border-[#dce4e1] bg-white lg:hidden">
-        <button onClick={() => setMobilePanelOpen(false)} className="flex flex-col items-center justify-center gap-0.5 text-[#0E5E4F]"><Icon name="book" className="h-5 w-5" /><span className="text-[10px] font-semibold">อ่าน</span></button>
-        <button onClick={() => setMobilePanelOpen(true)} className="flex flex-col items-center justify-center gap-0.5 text-slate-500"><Icon name="chat" className="h-5 w-5" /><span className="text-[10px]">ตัฟซีร</span></button>
-        <a href="/courses" className="flex flex-col items-center justify-center gap-0.5 text-slate-500"><Icon name="cards" className="h-5 w-5" /><span className="text-[10px]">หลักสูตร</span></a>
-        <button disabled title="ยังไม่เปิดใช้งาน" className="flex cursor-not-allowed flex-col items-center justify-center gap-0.5 text-slate-300"><Icon name="user" className="h-5 w-5" /><span className="text-[10px]">ฉัน</span></button>
-      </nav>
     </main>
   );
 }
