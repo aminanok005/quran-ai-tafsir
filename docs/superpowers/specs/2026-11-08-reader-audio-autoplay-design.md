@@ -86,8 +86,9 @@ request before speaking and must not advance after cancellation.
 
 Select a browser voice only when its BCP-47 language tag has the requested
 primary language (`th`, `en`, or `id`), case-insensitively; locale variants
-such as `en-US` are acceptable. If `getVoices()` is initially empty, wait for
-`voiceschanged` for up to three seconds. If an event yields voices but none
+such as `en-US` are acceptable. If the initial `getVoices()` list has no
+matching voice (including an empty list), wait for `voiceschanged` for up to
+three seconds from the playback request. If an event yields voices but none
 match, keep listening until the deadline. Select the first matching voice from
 the browser's list; after the deadline, report that no matching voice is
 available. Do not select an unrelated default voice.
@@ -127,8 +128,8 @@ control row wraps or stacks on narrow screens without obscuring ayah navigation.
 - Test that single-ayah translation playback waits for the selected translation
   and fails clearly when it is unavailable.
 - Test missing/failed translations, audio failures, and unsupported speech
-  synthesis, empty voice lists, language-voice timeouts, and non-matching
-  voices (including a later matching `voiceschanged` event); each unavailable
-  case must stop playback and expose an error.
+  synthesis, empty voice lists, initial non-matching lists, language-voice
+  timeouts, and non-matching `voiceschanged` events (including a later matching
+  event); each unavailable case must stop playback and expose an error.
 - Run the focused web tests, full web Jest suite, and TypeScript typecheck.
 - Verify desktop and mobile Reader controls in the local browser.
