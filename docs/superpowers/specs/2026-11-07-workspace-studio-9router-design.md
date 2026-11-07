@@ -68,23 +68,24 @@ On mobile, Reader, Sources, Dialogue, and Studio remain selectable tabs.
 
 ## Artifact contracts and behavior
 
-All three kinds use structured JSON validated by the API before returning it to
-the browser. Shared fields are `title` (1–160 characters) and `summary` (0–500
-characters). Invalid or incomplete model output is an explicit error; there is
-no silent template fallback.
+All three kinds use strict structured JSON validated by the API before returning
+it to the browser; reject unexpected fields. Shared fields are `title` (1–160
+characters) and `summary` (0–500 characters). Invalid or incomplete model
+output is an explicit error; there is no silent template fallback.
 
-- **Audio:** Return `segments`, an array of 4–8 entries. Each entry has a
-  `host` (`Host A` or `Host B`) and non-empty Thai `text` (maximum 1,200
-  characters). Start with `Host A` and alternate hosts. Use browser Speech
-  Synthesis for local playback, with play/stop controls and a clear status when
-  the browser or a suitable voice is unavailable. Do not generate or upload an
-  audio file.
+- **Audio:** Return `segments`, an array of 4–8 entries. Each entry has only
+  `host` (`Host A` or `Host B`) and `text`; require non-empty text of at most
+  1,200 characters containing Thai script. Start with `Host A` and alternate
+  hosts. Use browser Speech Synthesis for local playback, with play/stop
+  controls and a clear status when the browser or a suitable voice is
+  unavailable. Do not generate or upload an audio file.
 - **Quiz:** Return `questions`, exactly five entries. Each has a non-empty
   `question` (maximum 500 characters), exactly three non-empty `options`
   (maximum 200 characters each), one `answer_index` from 0 to 2, and a
-  non-empty `explanation` (maximum 1,000 characters). Selecting an option
-  immediately shows correctness and the explanation. Progress and score are
-  held only in the current page; they are not persisted.
+  non-empty `explanation` (maximum 1,000 characters). Reject additional fields
+  on each question. Selecting an option immediately shows correctness and the
+  explanation. Progress and score are held only in the current page; they are
+  not persisted.
 - **Infographic:** Return a non-empty `key_takeaway` (maximum 500 characters)
   and 3–6 `cards`. Each card has a non-empty `heading` (maximum 100 characters)
   and 2–5 non-empty `points` (maximum 280 characters each). Optional
@@ -94,10 +95,13 @@ no silent template fallback.
 
 Keep source metadata separate from editable artifact content. Render clickable
 citation pills below the artifact title: `[1] <surah name> <surah>:<ayah>` links
-to the canonical Quran page, and `[2] <resource name>` links to the source URL
-returned by the API only when that Tafsir is approved and was available in the
-server cache. Do not construct or trust Tafsir citation URLs from browser input.
-Mark generated output as `AI-SYNTHESIS`.
+to `https://quran.com/<surah>/<ayah>`. `[2] <resource name>` links only to the
+Quran Foundation Content API URL constructed server-side from the configured
+Content API base URL, configured resource ID, and cached ayah key, and only
+when that Tafsir is approved and available in the server cache. Validate HTTPS
+and that the host matches the configured Quran Foundation API host. Never
+accept a Tafsir citation URL from model output or browser input. Mark generated
+output as `AI-SYNTHESIS`.
 
 The JSON editor edits the artifact's `title`, `summary`, and kind-specific
 content fields, but not server-returned citations or evidence status. Valid JSON
@@ -131,6 +135,8 @@ Use the repository's existing pytest, Jest, and TypeScript tooling:
 - Test Studio rendering, immediate Quiz feedback, local Audio controls, JSON
   export, editable JSON validation, citation links, Save to Note, and error
   states with the existing Jest setup.
+- Verify citation/evidence metadata cannot be edited and that Save to Note
+  stores exactly the validated artifact envelope, including its citations.
 - Test panel persistence, the `[`/`]` mapping outside editable controls, and
   mobile view-tab selection.
 - Run the web typecheck and targeted API/web tests; do not make a 9Router
