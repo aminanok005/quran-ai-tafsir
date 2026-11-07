@@ -2,6 +2,35 @@
 
 PostgreSQL is the system of record. pgvector is an optional retrieval extension.
 
+## Local PostgreSQL with pgvector
+
+Start the development database from the repository root:
+
+```bash
+docker compose -f docker/docker-compose.yml up -d db
+```
+
+The Compose service uses PostgreSQL 16 with pgvector 0.8.1 and persists data in
+the `postgres_data` volume. Local defaults are database `quran_ai`, user
+`quran_ai`, and password `quran_ai_dev`; set `POSTGRES_DB`, `POSTGRES_USER`,
+and `POSTGRES_PASSWORD` in the root `.env` to override them. These defaults are
+for local development only.
+
+The API container connects to the `db` service automatically. For host-run
+migrations, use the equivalent localhost URL:
+
+```bash
+DATABASE_URL=postgresql+psycopg://quran_ai:quran_ai_dev@localhost:5432/quran_ai \
+  bun run db:migrate
+```
+
+The initial migration enables the `vector` extension. Verify it after migration:
+
+```bash
+docker compose -f docker/docker-compose.yml exec db \
+  psql -U quran_ai -d quran_ai -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
+```
+
 ## Schema Overview
 
 ### Quran Tables
