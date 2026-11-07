@@ -62,6 +62,10 @@ identity and `user_notes` API remain the persistence path: **Save to Note**
 creates a Note; generation, editing, export, and quiz progress do not create a
 separate database record.
 
+The workspace continues to map `[` to toggling the Sources panel and `]` to
+toggling Studio; shortcuts are ignored while focus is in an editable control.
+On mobile, Reader, Sources, Dialogue, and Studio remain selectable tabs.
+
 ## Artifact contracts and behavior
 
 All three kinds use structured JSON validated by the API before returning it to
@@ -88,9 +92,22 @@ no silent template fallback.
   as responsive local cards, without an image-generation service, and allow
   JSON export.
 
-Show Quran citation metadata and include Tafsir citation metadata only when the
-source is approved and was available in the server cache. Mark generated output
-as `AI-SYNTHESIS`.
+Keep source metadata separate from editable artifact content. Render clickable
+citation pills below the artifact title: `[1] <surah name> <surah>:<ayah>` links
+to the canonical Quran page, and `[2] <resource name>` links to the source URL
+returned by the API only when that Tafsir is approved and was available in the
+server cache. Do not construct or trust Tafsir citation URLs from browser input.
+Mark generated output as `AI-SYNTHESIS`.
+
+The JSON editor edits the artifact's `title`, `summary`, and kind-specific
+content fields, but not server-returned citations or evidence status. Valid JSON
+matching the active artifact schema updates the preview; invalid JSON leaves
+the last valid preview intact, shows a validation error, and blocks Save and
+Export until corrected. Export the validated artifact envelope, including
+server-returned citations and evidence status, as JSON. **Save to Note** stores
+that same validated envelope in the existing note `content` field, uses the
+edited title, and records the selected ayah/source metadata through the existing
+note API.
 
 ## Errors and privacy
 
@@ -107,11 +124,15 @@ Use the repository's existing pytest, Jest, and TypeScript tooling:
 - Unit-test strict output validation for Audio, Quiz, and Infographic.
 - Test the API route with a mocked generator and mocked/cache-only Tafsir
   boundary, including the no-cache and unapproved-source failures.
-- Assert tests make no outbound model or Quran Foundation calls. Manual
+- Assert automated tests make zero network calls, including to 9Router and
+  Quran Foundation. Manual
   Generate clicks in local development may call only the configured local
   9Router; no automated test may do so.
 - Test Studio rendering, immediate Quiz feedback, local Audio controls, JSON
-  export, Save to Note, and error states with the existing Jest setup.
+  export, editable JSON validation, citation links, Save to Note, and error
+  states with the existing Jest setup.
+- Test panel persistence, the `[`/`]` mapping outside editable controls, and
+  mobile view-tab selection.
 - Run the web typecheck and targeted API/web tests; do not make a 9Router
   request as part of automated verification.
 
