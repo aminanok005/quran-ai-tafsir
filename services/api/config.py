@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     quran_api_client_id: str = Field(default="REPLACE_WITH_APPROVED_CLIENT_ID", validation_alias="QURAN_API_CLIENT_ID")
     quran_api_client_secret: str = Field(default="REPLACE_WITH_SECRET", validation_alias="QURAN_API_CLIENT_SECRET")
     quran_api_token_cache_ttl: int = Field(default=3300, validation_alias="QURAN_API_TOKEN_CACHE_TTL_SECONDS")
+    quran_api_auth_base_url: Optional[str] = Field(default=None, validation_alias="QURAN_API_AUTH_BASE_URL")
+    quran_api_tafsir_scope: str = Field(default="content.tafsirs.read", validation_alias="QURAN_API_TAFSIR_SCOPE")
+    quran_tafsir_resource_map: Dict[str, int] = Field(
+        default_factory=lambda: {"ibn_kathir": 169},
+        validation_alias="QURAN_TAFSIR_RESOURCE_MAP",
+    )
 
     # AI Configuration
     llm_provider: Optional[str] = Field(default=None, validation_alias="LLM_PROVIDER")

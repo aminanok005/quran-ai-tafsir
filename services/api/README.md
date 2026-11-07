@@ -30,16 +30,41 @@ The JSON importer remains separately rights-gated. Do not mark a source as
 approved or import it into a production database until its rights and
 verification evidence have been reviewed.
 
-### Local development using the JSON corpus
+### Tafsir source in development
 
-When `ENVIRONMENT=development` (the default), the Reader loads the selected
-passage directly from the matching `data-tafsir/*.json` file and translates
-only that passage on demand. This path does not connect to PostgreSQL or write
-translations to the database; translated passages are cached in API process
-memory. Production continues to use the database-backed, rights-gated routes.
-Long passages are split into word-boundary chunks and translated in order.
-The LLM key remains server-side and must be provided through the existing
-runtime environment variables.
+When `ENVIRONMENT=development` (the default), the Reader looks for a cached
+passage in PostgreSQL first. On a cache miss, the API requests that single ayah
+from the authenticated Quran Foundation Content API v4 Tafsir endpoint and
+caches the response in PostgreSQL. Cached API passages are always marked
+`development_only`/`unverified`; production never fetches or returns these
+records. The development cache does not assert that the source is licensed for
+reuse. Review rights, attribution, and verification evidence before promoting
+any source to production or enabling translation.
+
+Configure the Quran Foundation credentials on the API server only:
+
+```text
+QURAN_API_BASE_URL=https://apis-prelive.quran.foundation
+QURAN_API_CLIENT_ID=<pre-live client ID>
+QURAN_API_CLIENT_SECRET=<pre-live client secret>
+QURAN_API_TAFSIR_SCOPE=content.tafsirs.read
+QURAN_TAFSIR_RESOURCE_MAP={"ibn_kathir":169}
+```
+
+Use the production API host with production credentials, or the pre-live host
+with pre-live credentials; OAuth is selected to match the API host. The default
+resource mapping is Ibn Kathir English (resource 169). Override it with a JSON
+object mapping the application's scholar IDs to resource IDs available to your
+Quran Foundation account. Confirm IDs and languages against the API's current
+resource list rather than assuming IDs from third-party examples. Keep all
+credentials server-side.
+
+Translation of a development-only API passage remains blocked until its source
+book and permission record are explicitly approved, verified, and licensed.
+The existing JSON importer and local JSON corpus remain separate tools for
+development-only vector ingestion; they are not used as the Reader's Tafsir
+runtime fallback. Long approved passages are split into word-boundary chunks
+and translated in order.
 
 If translation returns HTTP 429 with an exhausted-credit/quota message, the
 configured provider account must have available API billing/usage quota before

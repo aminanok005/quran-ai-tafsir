@@ -4,7 +4,7 @@ import logging
 import time
 from threading import Lock
 from typing import Any, Dict
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -12,16 +12,17 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 from ..config import settings
+from ..services.quran_foundation_tafsir import (
+    QuranFoundationTafsir,
+    QuranFoundationTafsirClient,
+    QuranFoundationTafsirError,
+)
+from ..services.tafsir_api_storage import upsert_development_qf_tafsir
 from ..services.tafsir_translation import (
     TranslationProviderError,
     translate_tafsir_to_thai,
 )
-from ..services.tafsir_json import (
-    TAFSIR_JSON_SOURCES,
-    TafsirJsonDataError,
-    get_tafsir_json_text,
-    split_tafsir_text,
-)
+from ..services.tafsir_json import split_tafsir_text
 
 router = APIRouter(prefix="/tafsir", tags=["Tafsir"])
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ _development_translations: Dict[str, str] = {}
 _development_translation_lock = Lock()
 _TRANSLATION_RATE_LIMIT = 5
 _TRANSLATION_RATE_WINDOW_SECONDS = 60
-_MAX_DEVELOPMENT_SOURCE_LENGTH = 120_000
+_qf_tafsir_client: QuranFoundationTafsirClient | None = None
 
 
 def get_engine() -> Engine:
@@ -48,6 +49,20 @@ def get_engine() -> Engine:
     if _engine is None:
         _engine = create_engine(settings.database_url, pool_pre_ping=True)
     return _engine
+
+
+def get_qf_tafsir_client() -> QuranFoundationTafsirClient:
+    global _qf_tafsir_client
+    if _qf_tafsir_client is None:
+        _qf_tafsir_client = QuranFoundationTafsirClient(
+            api_base_url=settings.quran_api_base_url,
+            auth_base_url=settings.quran_api_auth_base_url,
+            client_id=settings.quran_api_client_id,
+            client_secret=settings.quran_api_client_secret,
+            scope=settings.quran_api_tafsir_scope,
+            token_cache_ttl=settings.quran_api_token_cache_ttl,
+        )
+    return _qf_tafsir_client
 
 
 def _translation_is_allowed(passage: Dict[str, Any]) -> bool:
@@ -62,11 +77,14 @@ def _translation_is_allowed(passage: Dict[str, Any]) -> bool:
     )
 
 
-def _get_passage(engine: Engine, surah: int, ayah: int, agent_type: str) -> Dict[str, Any] | None:
-    book_id = BOOK_IDS.get(agent_type)
-    if book_id is None:
-        return None
-
+def _get_passage(
+    engine: Engine,
+    surah: int,
+    ayah: int,
+    book_id: str,
+    *,
+    include_development: bool = False,
+) -> Dict[str, Any] | None:
     statement = text("""
         SELECT
             p.id::text AS passage_id,
@@ -81,6 +99,7 @@ def _get_passage(engine: Engine, surah: int, ayah: int, agent_type: str) -> Dict
             p.source_url AS passage_source_url,
             p.verification_status::text AS evidence_status,
             b.book_id,
+            b.metadata AS book_metadata,
             b.title AS book_title,
             b.title_ar AS book_title_ar,
             COALESCE(sp.license, b.license) AS license,
@@ -100,19 +119,34 @@ def _get_passage(engine: Engine, surah: int, ayah: int, agent_type: str) -> Dict
           AND p.ayah_start <= :ayah
           AND p.ayah_end >= :ayah
           AND b.book_id = :book_id
+          AND (
+              :include_development = TRUE
+              OR (
+                  b.permission_status::text = 'approved'
+                  AND b.verification_status::text = 'verified'
+                  AND sp.permission_status::text = 'approved'
+                  AND sp.verification_status::text = 'verified'
+              )
+          )
         ORDER BY p.created_at DESC
         LIMIT 1
     """)
     with engine.connect() as connection:
         row = connection.execute(
             statement,
-            {"surah": surah, "ayah": ayah, "book_id": book_id},
+            {
+                "surah": surah,
+                "ayah": ayah,
+                "book_id": book_id,
+                "include_development": include_development,
+            },
         ).mappings().first()
     return dict(row) if row else None
 
 
 def _public_passage(passage: Dict[str, Any]) -> Dict[str, Any]:
     translation_allowed = _translation_is_allowed(passage)
+    is_development = passage["permission_status"] == "development_only"
     return {
         "id": passage["passage_id"],
         "surah_number": passage["surah_number"],
@@ -126,6 +160,7 @@ def _public_passage(passage: Dict[str, Any]) -> Dict[str, Any]:
             None if translation_allowed else
             "การแปลด้วย AI ถูกระงับจนกว่าสิทธิ์ ใบอนุญาต และหลักฐานการตรวจสอบแหล่งข้อมูลจะได้รับอนุมัติ"
         ),
+        "development_mode": is_development,
         "source": {
             "book_id": passage["book_id"],
             "title": passage["book_title"],
@@ -136,6 +171,11 @@ def _public_passage(passage: Dict[str, Any]) -> Dict[str, Any]:
             "page": passage["page"],
             "url": passage["passage_source_url"] or passage["book_source_url"],
             "permission_status": passage["permission_status"],
+            "provider": (
+                "Quran Foundation Content API"
+                if str(passage["book_id"]).startswith("qf_tafsir_")
+                else None
+            ),
         },
     }
 
@@ -221,45 +261,6 @@ def _translation_provider_http_exception(error: httpx.HTTPStatusError) -> HTTPEx
     )
 
 
-def _development_passage(surah: int, ayah: int, agent_type: str) -> Dict[str, Any] | None:
-    source = TAFSIR_JSON_SOURCES.get(agent_type)
-    if source is None:
-        return None
-    try:
-        arabic_text = get_tafsir_json_text(agent_type, surah, ayah)
-    except TafsirJsonDataError as error:
-        logger.error("Local tafsir JSON source is unavailable for %s", agent_type)
-        raise HTTPException(status_code=503, detail="Local tafsir source is unavailable") from error
-    if not arabic_text:
-        return None
-
-    passage_id = str(uuid5(NAMESPACE_URL, f"quran-ai-dev:{agent_type}:{surah}:{ayah}"))
-    cache_key = f"{agent_type}:{surah}:{ayah}"
-    return {
-        "id": passage_id,
-        "surah_number": surah,
-        "ayah_start": ayah,
-        "ayah_end": ayah,
-        "arabic_text": arabic_text,
-        "thai_translation": _development_translations.get(cache_key),
-        "evidence_status": "UNVERIFIED",
-        "translation_allowed": True,
-        "translation_block_reason": None,
-        "development_mode": True,
-        "source": {
-            "book_id": source["book_id"],
-            "title": source["title"],
-            "title_ar": source["title_ar"],
-            "scholar": source["scholar"],
-            "edition": source["edition"],
-            "volume": None,
-            "page": None,
-            "url": source["url"],
-            "permission_status": "development-only",
-        },
-    }
-
-
 async def _translate_development_passage(source_text: str) -> str:
     api_key = settings.translation_api_key
     provider = settings.llm_provider
@@ -273,9 +274,6 @@ async def _translate_development_passage(source_text: str) -> str:
                 "OPENAI_API_KEY is used only with api.openai.com."
             ),
         )
-    if len(source_text) > _MAX_DEVELOPMENT_SOURCE_LENGTH:
-        raise HTTPException(status_code=413, detail="This tafsir passage is too long to translate")
-
     translations = []
     for chunk in split_tafsir_text(source_text):
         translations.append(await translate_tafsir_to_thai(
@@ -293,39 +291,90 @@ async def get_tafsir_passage(surah: int, ayah: int, agent_type: str):
     """Return one source passage for the selected ayah and scholar."""
     if not 1 <= surah <= 114 or not 1 <= ayah <= 286:
         raise HTTPException(status_code=422, detail="Invalid surah or ayah number")
-    if agent_type not in BOOK_IDS:
+    resource_id = settings.quran_tafsir_resource_map.get(agent_type)
+    book_id = f"qf_tafsir_{resource_id}" if resource_id else BOOK_IDS.get(agent_type)
+    if book_id is None:
         raise HTTPException(status_code=404, detail="No imported tafsir source is available for this scholar")
 
-    if settings.environment.lower() == "development":
-        passage = _development_passage(surah, ayah, agent_type)
-        if passage is None:
-            raise HTTPException(status_code=404, detail="No tafsir passage was found for this ayah")
-        return {"success": True, "data": passage}
+    is_development = settings.environment.lower() == "development"
+    engine = get_engine()
+    passage = _get_passage(
+        engine,
+        surah,
+        ayah,
+        book_id,
+        include_development=is_development,
+    )
+    if passage is not None:
+        return {"success": True, "data": _public_passage(passage)}
 
-    passage = _get_passage(get_engine(), surah, ayah, agent_type)
-    if passage is None:
-        raise HTTPException(status_code=404, detail="No tafsir passage was found for this ayah")
-    return {"success": True, "data": _public_passage(passage)}
+    if settings.environment.lower() == "development":
+        if not resource_id:
+            raise HTTPException(status_code=404, detail="No Tafsir API resource is configured for this scholar")
+        client = get_qf_tafsir_client()
+        try:
+            api_passage: QuranFoundationTafsir = await client.fetch_ayah(
+                resource_id,
+                surah,
+                ayah,
+            )
+        except QuranFoundationTafsirError as error:
+            status_code = 503 if error.status_code is None or error.status_code >= 500 else 502
+            logger.warning(
+                "Quran Foundation Tafsir request failed (HTTP %s)",
+                error.status_code or "network",
+            )
+            raise HTTPException(status_code=status_code, detail=str(error)) from error
+        source_url = (
+            f"{client.content_api_url}/tafsirs/{resource_id}/by_ayah/{surah}:{ayah}"
+        )
+        try:
+            upsert_development_qf_tafsir(engine, api_passage, source_url=source_url)
+        except ValueError as error:
+            logger.error("Quran Foundation Tafsir development cache write was refused")
+            raise HTTPException(status_code=409, detail="Tafsir source is not development-only") from error
+        passage = _get_passage(
+            engine,
+            surah,
+            ayah,
+            book_id,
+            include_development=True,
+        )
+        if passage is None:
+            raise HTTPException(status_code=503, detail="Fetched Tafsir passage was not persisted")
+        return {"success": True, "data": _public_passage(passage)}
+
+    raise HTTPException(status_code=404, detail="No approved Tafsir passage was found for this ayah")
 
 
 @router.post("/passages/dev/{surah}/{ayah}/translate", response_model=Dict[str, Any])
 async def translate_development_passage(surah: int, ayah: int, agent_type: str, request: Request):
-    """Translate only the selected local JSON passage; results remain in process memory."""
+    """Translate a passage only when its source has approved rights and verification."""
     if settings.environment.lower() != "development":
         raise HTTPException(status_code=404, detail="Development-only tafsir translation is unavailable")
     if not 1 <= surah <= 114 or not 1 <= ayah <= 286:
         raise HTTPException(status_code=422, detail="Invalid surah or ayah number")
-    if agent_type not in TAFSIR_JSON_SOURCES:
-        raise HTTPException(status_code=404, detail="No local tafsir source is available for this scholar")
+    resource_id = settings.quran_tafsir_resource_map.get(agent_type)
+    book_id = f"qf_tafsir_{resource_id}" if resource_id else BOOK_IDS.get(agent_type)
+    if book_id is None:
+        raise HTTPException(status_code=404, detail="No Tafsir source is configured for this scholar")
+    passage = _get_passage(
+        get_engine(),
+        surah,
+        ayah,
+        book_id,
+        include_development=True,
+    )
+    if passage is None:
+        raise HTTPException(status_code=404, detail="No Tafsir passage was found for this ayah")
+    if not _translation_is_allowed(passage):
+        raise HTTPException(status_code=403, detail="Source rights and verification must be approved before translation")
 
-    cache_key = f"{agent_type}:{surah}:{ayah}"
+    cache_key = str(passage["passage_id"])
     cached = _development_translations.get(cache_key)
     if cached:
         return {"success": True, "data": {"thai_translation": cached, "cached": True}}
 
-    passage = _development_passage(surah, ayah, agent_type)
-    if passage is None:
-        raise HTTPException(status_code=404, detail="No tafsir passage was found for this ayah")
     _enforce_translation_rate_limit(request)
 
     try:
