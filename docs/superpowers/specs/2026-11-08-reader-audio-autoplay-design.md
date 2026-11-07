@@ -61,6 +61,23 @@ The API route explicitly allows `th.thai`, `en.sahih`, and `id.indonesian`,
 while continuing to reject other editions. Alafasy continues to use the
 existing `ar.alafasy` audio payload.
 
+Use a monotonically increasing playback generation for each start/stop or
+sequence interruption. Every asynchronous continuation and audio/speech event
+captures its generation and must verify it is still current before speaking,
+advancing, changing status, or scrolling. On cancellation, pause and reset the
+shared audio element, detach/neutralize its completion callback, call
+`speechSynthesis.cancel()`, and invalidate the generation. Translation
+requests are keyed by surah and edition; abort an obsolete request when the
+surah or selected edition changes or the Reader unmounts, and ignore any late
+result whose key no longer matches. Auto must await the selected translation
+request before speaking and must not advance after cancellation.
+
+Select a browser voice only when its BCP-47 language tag has the requested
+primary language (`th`, `en`, or `id`), case-insensitively; locale variants
+such as `en-US` are acceptable. If `getVoices()` is initially empty, wait for
+`voiceschanged` for up to three seconds, then report that no matching voice is
+available. Do not select an unrelated default voice.
+
 If translation data is missing, its request fails, audio fails, or speech
 synthesis/voice support is unavailable, stop Auto and surface a clear status
 near the playback controls. Do not advance to the next ayah after a failed
@@ -89,8 +106,10 @@ wraps or stacks on narrow screens without obscuring ayah navigation.
 - Test mode and language selection, correct translation loading, and
   single-ayah playback.
 - Test Auto's per-ayah sequence, selected-ayah scrolling, stop at surah end,
-  interruption by manual navigation or settings changes, and cleanup.
+  interruption by manual navigation or settings changes, stale-event/result
+  suppression, and cleanup.
 - Test missing/failed translations, audio failures, and unsupported speech
-  synthesis or language voices; each must stop playback and expose an error.
+  synthesis, empty voice lists, language-voice timeouts, and non-matching
+  voices; each must stop playback and expose an error.
 - Run the focused web tests, full web Jest suite, and TypeScript typecheck.
 - Verify desktop and mobile Reader controls in the local browser.
