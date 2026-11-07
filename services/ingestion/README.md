@@ -27,3 +27,21 @@ python3 -m unittest -v
 ```
 
 This parser is for research and engineering only. It does not establish legal authorization or production approval.
+
+## Development-only PostgreSQL/pgvector ingestion
+
+`postgres.py` maps parsed records into the existing canonical schema:
+`scholars`, `tafsir_books`, `source_permissions`, and `tafsir_passages`.
+Stable UUIDs and `ON CONFLICT` updates make passage re-ingestion repeatable.
+Every write is hard-coded to `development_only` permission and `unverified`
+status; this parser cannot ingest into the approved production corpus.
+
+The repository-root script `scripts/ingest_tafsir_vectors.py` defaults to a
+no-network, no-database dry run. Writes require `--apply-development-only`,
+`ENVIRONMENT=development`, a 1536-dimensional embedding provider, and an
+explicit development database URL. Raw Arabic text is stored unchanged; only
+normalized search text is sent to the embedding endpoint. API keys and source
+text are not printed.
+
+No schema change is required: `services/api/migrations/versions/0001_initial_setup.py`
+already enables pgvector and creates the `vector(1536)` column and HNSW index.

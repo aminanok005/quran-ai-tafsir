@@ -1,9 +1,10 @@
 # Configuration management for QURAN AI API service
 
-from pydantic import AliasChoices, Field
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Literal, Optional
 import os
+from urllib.parse import urlsplit
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -47,24 +48,56 @@ class Settings(BaseSettings):
 
     # AI Configuration
     llm_provider: Optional[str] = Field(default=None, validation_alias="LLM_PROVIDER")
-    llm_api_key: Optional[str] = Field(
-        default=None,
-        validation_alias=AliasChoices("OPENAI_API_KEY", "LLM_API_KEY"),
-    )
+    llm_api_key: Optional[str] = Field(default=None, validation_alias="LLM_API_KEY")
+    openai_api_key: Optional[str] = Field(default=None, validation_alias="OPENAI_API_KEY")
     llm_api_base_url: Optional[str] = Field(default=None, validation_alias="LLM_API_BASE_URL")
+    llm_api_wire_api: Literal["chat_completions", "responses"] = Field(
+        default="chat_completions",
+        validation_alias="LLM_API_WIRE_API",
+    )
     llm_model: Optional[str] = Field(default=None, validation_alias="LLM_MODEL")
     llm_max_tokens: int = Field(default=4000, validation_alias="LLM_MAX_TOKENS")
     llm_temperature: float = Field(default=0.1, ge=0.0, le=2.0, validation_alias="LLM_TEMPERATURE")
+
+    @property
+    def translation_api_key(self) -> Optional[str]:
+        if self.llm_api_key:
+            return self.llm_api_key
+        if self.llm_api_base_url:
+            try:
+                host = urlsplit(self.llm_api_base_url).hostname
+            except ValueError:
+                return None
+            if host != "api.openai.com":
+                return None
+        return self.openai_api_key
 
     # Embedding Configuration
     embedding_provider: Optional[str] = Field(default=None, validation_alias="EMBEDDING_PROVIDER")
     embedding_model: Optional[str] = Field(default=None, validation_alias="EMBEDDING_MODEL")
     embedding_api_key: Optional[str] = Field(default=None, validation_alias="EMBEDDING_API_KEY")
+    embedding_api_base_url: Optional[str] = Field(
+        default=None,
+        validation_alias="EMBEDDING_API_BASE_URL",
+    )
     embedding_dimensions: Optional[int] = Field(default=None, validation_alias="VECTOR_DIMENSIONS")
+    embedding_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        le=120,
+        validation_alias="EMBEDDING_TIMEOUT_SECONDS",
+    )
 
     # Vector Database
     vector_db_url: Optional[str] = Field(default=None, validation_alias="VECTOR_DB_URL")
     vector_db_collection: str = Field(default="quran_tafsir", validation_alias="VECTOR_DB_COLLECTION")
+
+    # Strapi CMS. These credentials are server-side only.
+    strapi_api_base_url: Optional[str] = Field(
+        default=None,
+        validation_alias="STRAPI_API_BASE_URL",
+    )
+    strapi_api_token: Optional[str] = Field(default=None, validation_alias="STRAPI_API_TOKEN")
 
     # Security
     secret_key: str = Field(default="GENERATE_A_LONG_RANDOM_SECRET", validation_alias="SECRET_KEY")

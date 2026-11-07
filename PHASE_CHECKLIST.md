@@ -1,7 +1,7 @@
 # QURAN AI - Phase Checklist & Progress Tracker
 
-**Last Updated:** 2026-11-05  
-**Current Phase:** Phase 2 blockers → Phase 3 integration
+**Last Updated:** 2026-11-06
+**Current Phase:** Tafsir translation router configuration follow-up → Phase 2 database/source gates → Phase 3 data-backed validation
 
 ---
 
@@ -9,9 +9,9 @@
 
 | Phase | Status | Completion | Blockers |
 |-------|--------|------------|----------|
-| **Phase 1: Foundation & Unified Reader** | ✅ **IMPLEMENTED** | — | End-to-end integration not verified |
-| **Phase 2: Knowledge Base & Hybrid RAG** | 🔄 **IN PROGRESS** | — | Source review and disposable-database validation pending |
-| **Phase 3: Multi-Agent Tafsir Engine** | 🔄 **IMPLEMENTED; VALIDATION PENDING** | — | Data-backed integration and runtime validation |
+| **Phase 1: Foundation & Unified Reader** | ✅ **IMPLEMENTED; READER SMOKE-TESTED** | — | QPC font coverage across all pages is not verified |
+| **Phase 2: Knowledge Base & Hybrid RAG** | 🔄 **IN PROGRESS** | — | PostgreSQL target/authentication, source-rights review, and disposable-database validation pending |
+| **Phase 3: Multi-Agent Tafsir Engine** | 🔄 **IMPLEMENTED; VALIDATION PENDING** | — | Data-backed integration and runtime validation pending |
 | **Phase 4: Gamified Learning SaaS** | ⏸️ **PENDING** | 0% | Phase 3 completion |
 | **Phase 5: AI Active Recall Suite** | ⏸️ **PENDING** | 0% | Phase 4 completion |
 | **Phase 6: Billing, Security & Production** | ⏸️ **PENDING** | 0% | Phase 5 completion |
@@ -24,12 +24,25 @@
 - [x] Next.js 14+ project structure with App Router
 - [x] Three-column responsive layout (260px | flex | 420px)
 - [x] Thai-first UI with Arabic RTL support
+- [x] Center Reader navigation, reading progress, Arabic font sizing, and retryable loading state
 - [x] Quran API integration (Quran Foundation API)
+- [x] Local `data-tafsir/qpc-v4.json` word records assembled into ordered ayah text for the Reader
 - [x] Uthmani script display with proper RTL rendering
-- [x] Thai translation (King Fahd Complex certified)
+- [x] Thai translation loaded by ayah from Quran Cloud
 - [x] English and Urdu translations
 - [x] Word-by-word morphology and transliteration
-- [ ] Audio playback (reader action is currently unavailable/disabled)
+- [x] Per-ayah Al-Afasy audio playback in the Reader
+- [x] Reader smoke test: homepage and Reader return HTTP 200; all referenced CSS/JS assets return HTTP 200
+- [x] Surah selector displays actual names for all 114 surahs instead of numeric-only labels
+- [x] Mobile landing navigation is visible on first view; Reader menu opens the full scrollable surah list and library options
+- [x] Sample Reader check: Surah 1 loads 7 QPC ayahs, Thai translation, and Al-Afasy audio data
+- [x] Ayah selection check: selecting another ayah keeps the full surah Arabic and Thai text visible, updates the URL without an App Router navigation, and reuses cached Ibn Kathir content when returning to a previously loaded ayah
+- [x] Thai translation fast path: deduplicate/cache successful translations in the browser during the session and cache public Quran API responses for 1 hour with stale-while-revalidate; keep audio independent
+- [x] Translation readability: label Thai translations and render tafsir translation paragraphs in a spaced, highlighted reading block without changing the translated wording
+- [x] Surah An-Nas translation API returns all 6 ayahs; repeated local API request returned 200 in 0.049s versus 0.419s cold
+- [ ] Tafsir response/data check: live development API returned placeholder text (`114:1`) for both Arabic and Thai fields when requesting ayah 114:2; the Thai translation attempt for 114:1 also timed out. Correct/verify the development passage source and translation runtime before calling the Reader flow complete.
+- [x] QUL QPC V4 font samples for pages 1, 2, and 604 return HTTP 200 and Arabic QPC glyphs render in the Reader
+- [ ] Verify QPC page-font loading and rendering across the full Quran and surah/page transitions
 - [x] Database models (PostgreSQL + pgvector)
 - [x] API contracts defined (OpenAPI)
 - [x] Configuration management
@@ -50,17 +63,8 @@
 - [x] Database model/schema design exists (table count still needs migration verification)
 - [x] Shamela ingestion pipeline structure
 - [x] Tafsir citation schemas
-- [x] Evidence classification enums (VERIFIED, SOURCE-ATTRIBUTED, etc.)
 - [x] Vector search indexes (HNSW + FTS)
 - [x] Hybrid RAG architecture design
-
-### Blocked / Not Yet Verified:
-- [x] **Canonical migration source review** - indexes follow their tables and methodology apostrophes are valid SQL escaping
-- [ ] **Canonical migration runtime validation** - not run against PostgreSQL
-- [x] **Quran seeder syntax/schema fixes** - corrected to insert canonical `quran_ayahs` columns and all 6,236 verses; unit tests pass
-- [ ] **Tafsir loader runtime validation** - SQLAlchemy/PostgreSQL runtime not available in this environment
-- [ ] **Database initialization and data loading** - no database connection, migration, or ingestion was performed; live database state is unknown
-- [ ] **Vector search testing and optimization** - not validated against a populated database
 
 ### Files / Docs Available (review before execution):
 - `scripts/load_tafsir_data.py` - Loads classical tafsir sources only after explicit rights approval and verification
@@ -70,9 +74,8 @@
 
 ### Blockers
 - Tafsir sources are deliberately marked pending/unverified until their rights and provenance are reviewed; the loader refuses them by default.
-- User reports local PostgreSQL does not require a database password; PostgreSQL was observed responding on port 5434. Use the existing local peer/trust authentication and do not add a password to commands or repository files.
-- The OS sudo credential is separate from the database credential. Never store it in this checklist; rotate it if the reported value is real, since it is weak.
-- Migration and data loading remain unrun; validate against a disposable development database, not production.
+- A prior read-only audit found that the API could not authenticate to its configured PostgreSQL target. The intended instance and supported authentication path still need confirmation; do not change credentials, database configuration, or infrastructure as part of this checklist.
+- Migration and data loading have not been run against a live database. After the target is confirmed and the user authorizes it, validate only against a disposable development database.
 
 ---
 
@@ -88,9 +91,7 @@
   - [x] **Al-Zuhayli Agent** - Contemporary comparative fiqh
 - [x] Evidence classification system (5 badges)
 - [x] Agent orchestration, evidence-validation, and API modules exist
-- [x] Development Reader reads a selected tafsir passage from local JSON and translates it on demand without database access or writes; production remains database-backed
-- [ ] End-to-end execution with populated, verified source data
-- [ ] Runtime validation of citations and scholarly disagreement behavior
+- [x] Development Reader reads a selected tafsir passage from local JSON and translates it on demand without database access or writes; 
 
 ### Remaining Validation / Implementation:
 - [ ] Confirm orchestration behavior and parallel execution
@@ -98,10 +99,40 @@
 - [ ] Disagreement matrix UI
 - [ ] Agent response streaming (SSE)
 - [ ] Measure and optimize RAG latency (< 800ms target)
+- [x] Add rights-filtered pgvector retrieval endpoint against the canonical 1536-dimension schema
+- [x] Add explicit development-only JSON-to-pgvector ingestion with dry-run default and stable IDs
+- [x] Add server-side Strapi course/chapter loading and Dynamic Zone lesson rendering
+- [ ] Configure a dedicated embedding provider and validate semantic search against a disposable database
+- [ ] Obtain source-rights approval before any production tafsir ingestion
+- [ ] Configure Strapi API base URL/read-only token and validate course publishing end to end
+- [ ] Add persistent course progress/scoring only after the project authentication/user model is ready
 
 Development JSON translation is covered by targeted API tests. A live OpenAI
-request was attempted but returned HTTP 429; production database integration
-has not been run.
+request returned HTTP 429 (`insufficient_quota` / credit balance exhausted) at
+the last recorded attempt. The account/project quota must be resolved by its
+owner before retrying. Production database integration has not been run.
+Latest runtime inspection found API 8011 is configured to use the local
+OpenAI-compatible endpoint on port 20128, but its process has `OPENAI_API_KEY`
+and no `LLM_API_KEY`. The local router needs its own API token, not the OpenAI
+account key. The API now uses `LLM_API_KEY` for custom endpoints, reserves
+`OPENAI_API_KEY` for `api.openai.com`, and supports the Responses API via
+`LLM_API_WIRE_API=responses`. API 8011 was restarted with the provided local
+router token and Responses protocol, but a real translation request returned
+HTTP 401 `invalid_api_key`; the configured router token is not accepted by the
+active local endpoint (or its upstream). API health remains 6/6 and 9Router
+was not modified. Translation remains blocked until its valid inbound/upstream
+credential is configured in the API environment. The suggested legacy
+translation URL on port 8000 returned 404; the active Quran translation route
+is served by Next.js at `/api/quran/surahs/114/?edition=th.thai`.
+In the latest browser check, the tafsir passage endpoint returned HTTP 200, but
+the selected-ayah response contained placeholder text and the client reported
+`Thai translation timed out; please try again`. The Reader keeps ayah navigation
+stable and caches passage results; source accuracy and successful translation
+remain separate validation blockers.
+Thai Quran translation data now has in-session request deduplication and a
+browser cache policy; this improves repeat navigation/reloads but cannot remove
+latency on a cold fetch if Quran Cloud is slow. AI tafsir translation continues
+to depend on the API/provider and has timed out in live validation.
 
 ### Agent Files Location:
 - `services/api/agents/ibn_kathir_agent.py`
@@ -168,20 +199,23 @@ has not been run.
 
 ---
 
-## 📋 **NEXT STEPS (ORDERED)**
+## 📋 **NEXT STEPS (ORDERED, WITH GATES)**
 
-1. **Review and approve source rights/provenance** before marking any tafsir source as approved/verified (or explicitly development-only for development use).
-2. **Validate the migration** against a disposable development PostgreSQL database on the local cluster (port 5434 was observed). Use the local PostgreSQL role/authentication setup with no database password; use `sudo -u postgres` only where OS-level privileges are required. The migration source review found no index-order or enum-quoting defect.
-3. **Run the Quran seeder** with local `DATABASE_URL` and Quran API credentials; confirm all 6,236 ayahs were upserted.
-4. **Load reviewed tafsir sources** with the correct policy mode, then verify counts, provenance statuses, and vector/hybrid search.
-5. **Run API-to-frontend integration and end-to-end checks**; then measure RAG/reader performance and complete security/UX review.
+1. **Finish Reader/QPC validation:** exercise page-font loading across all Quran pages and representative surah/page transitions; record any CDN, CORS, or glyph-rendering failures. Do not mark the QPC task complete based only on the sampled pages.
+2. **Unblock database work safely:** confirm which local PostgreSQL instance is intended and how the development API is expected to authenticate. Keep the audit read-only until the user explicitly authorizes a specific change; do not alter credentials, `.env`, shell configuration, or PostgreSQL settings.
+3. **Validate schema and Quran seed in disposable development data:** after step 2 and explicit authorization, run the reviewed migrations and seeder against a disposable database; verify schema state and all 6,236 ayahs. Do not run these against production.
+4. **Review tafsir source rights and provenance:** approve specific sources before ingestion, or keep them explicitly development-only. Then validate loader behavior and provenance/evidence fields in the disposable database.
+5. **Complete Phase 3 validation:** test API-to-Reader retrieval, evidence/citation handling, and orchestration using approved data; use mocked/offline provider tests while the recorded OpenAI quota error remains unresolved.
+6. **Continue Phase 3 product work:** implement the disagreement matrix and streaming only after the data-backed response contract and evidence behavior are validated; measure RAG latency against the <800 ms target.
+7. **Defer Phases 4–6:** start gamification, active recall, billing, and deployment only after Phase 2/3 validation and separate scope approval.
 
 ### Validation already recorded
 - [x] Ingestion policy unit tests: 6 passed (`python3 -m unittest -v` in `services/ingestion`)
 - [x] Quran seeder unit tests: 3 passed (`python3 -m unittest -v scripts.test_seed_quran_data`)
-- [x] Frontend build and typecheck passed (per `.agent-work/CLINE_REPORT.md`)
+- [x] Frontend typecheck passed after Reader changes
+- [x] Frontend development smoke test: homepage and Reader returned HTTP 200; 2 CSS and 5 JavaScript assets returned HTTP 200 after the Next.js cache rebuild
+- [ ] Re-run production build after the final Next.js configuration cleanup
 - [x] Python compile check: seeder, tafsir loader, and migration compile successfully
-- [ ] PostgreSQL migration, live database state, real data loading, and end-to-end API/frontend flow: not verified
 
 ---
 
@@ -198,35 +232,6 @@ has not been run.
 | `services/api/agents/*.py` | 6 agent implementations | Source files present; runtime validation pending |
 | `services/api/services/agent_orchestrator.py` | Agent orchestration | Source file present; runtime validation pending |
 | `services/api/services/evidence_validator.py` | Evidence validation | Source file present; data-backed validation pending |
-| `apps/web/` | Next.js 14 frontend | Build/typecheck pass recorded |
+| `apps/web/` | Next.js 14 frontend | Typecheck and development smoke test pass; production build after final config cleanup pending |
 
 ---
-
-## 📈 **SUCCESS METRICS**
-
-| Metric | Target | Current |
-|--------|--------|---------|
-| Database Tables | 12 | Unknown (not inspected/initialized in this task) |
-| Quran Verses | 6,236 | Unknown |
-| Tafsir Passages | 50,000+ | Unknown |
-| Classical Scholars | 6 | Unknown |
-| RAG Latency | < 800ms | N/A |
-| Reader Transition | < 100ms | N/A |
-| Zero Hallucination | 100% | Designed |
-| Quranic Text Integrity | 100% | Designed |
-
----
-
-## 🚀 **NEXT MILESTONE**
-
-**Phase 2 Completion Target:** End of Week 1 (2026-11-11)
-- Database fully initialized and populated
-- Classical sources loaded (100.7MB)
-- Quran verses seeded (6,236 verses)
-- Vector search tested and working
-
-**Phase 3 Integration / Validation:** Week 2 (2026-11-12)
-- Validate agent orchestration and evidence checks against populated, verified data
-- Complete disagreement matrix UI and streaming work
-
-**MVP Delivery Target:** Week 4 (2026-11-25)

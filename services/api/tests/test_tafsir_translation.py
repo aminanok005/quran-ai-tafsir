@@ -11,6 +11,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/quran_ai
 from services.api.app import app
 from services.api.routers.tafsir import (
     _public_passage,
+    _translation_provider_http_exception,
     _development_translations,
     _translation_is_allowed,
 )
@@ -31,18 +32,46 @@ class RuntimeSettingsTests(unittest.TestCase):
             "EMBEDDING_MODEL": "unit-test-embedding",
             "VECTOR_DIMENSIONS": "1234",
         }
-        with patch.dict(os.environ, variables):
+        with patch.dict(os.environ, variables, clear=True):
             from services.api.config import Settings
 
             settings = Settings(_env_file=None)
 
         self.assertEqual(settings.llm_provider, "openai")
         self.assertEqual(settings.llm_api_base_url, "https://llm.example.test/v1")
-        self.assertEqual(settings.llm_api_key, "new-openai-test-key")
+        self.assertEqual(settings.llm_api_key, "unit-test-key")
+        self.assertEqual(settings.openai_api_key, "new-openai-test-key")
+        self.assertEqual(settings.translation_api_key, "unit-test-key")
         self.assertEqual(settings.llm_model, "unit-test-model")
         self.assertEqual(settings.embedding_provider, "openai")
         self.assertEqual(settings.embedding_model, "unit-test-embedding")
         self.assertEqual(settings.embedding_dimensions, 1234)
+
+    def test_custom_provider_requires_its_own_llm_api_key(self):
+        variables = {
+            "DATABASE_URL": "postgresql+psycopg://postgres@localhost/quran_ai_test",
+            "LLM_API_BASE_URL": "http://127.0.0.1:20128/v1",
+            "OPENAI_API_KEY": "openai-key",
+        }
+        with patch.dict(os.environ, variables, clear=True):
+            from services.api.config import Settings
+
+            settings = Settings(_env_file=None)
+
+        self.assertIsNone(settings.translation_api_key)
+
+    def test_openai_key_is_used_for_official_openai_endpoint(self):
+        variables = {
+            "DATABASE_URL": "postgresql+psycopg://postgres@localhost/quran_ai_test",
+            "LLM_API_BASE_URL": "https://api.openai.com/v1",
+            "OPENAI_API_KEY": "openai-key",
+        }
+        with patch.dict(os.environ, variables, clear=True):
+            from services.api.config import Settings
+
+            settings = Settings(_env_file=None)
+
+        self.assertEqual(settings.translation_api_key, "openai-key")
 
 
 def passage_record():
@@ -90,6 +119,25 @@ class TafsirRightsTests(unittest.TestCase):
         self.assertIsNone(public["thai_translation"])
         self.assertFalse(public["translation_allowed"])
         self.assertEqual(public["arabic_text"], "نص التفسير")
+
+    def test_translation_provider_errors_explain_configuration_failures(self):
+        cases = (
+            (401, "OPENAI_API_KEY"),
+            (403, "OPENAI_API_KEY"),
+            (404, "LLM_API_BASE_URL"),
+            (400, "Chat Completions"),
+            (503, "ขัดข้องชั่วคราว"),
+        )
+        for status_code, expected_detail in cases:
+            with self.subTest(status_code=status_code):
+                error = httpx.HTTPStatusError(
+                    "provider error",
+                    request=httpx.Request("POST", "https://llm.example.test/v1/chat/completions"),
+                    response=httpx.Response(status_code, json={"error": {"message": "sensitive provider text"}}),
+                )
+                exception = _translation_provider_http_exception(error)
+                self.assertIn(expected_detail, exception.detail)
+                self.assertNotIn("sensitive provider text", exception.detail)
 
     def test_passage_endpoint_reads_database_row(self):
         source = passage_record()
@@ -157,6 +205,7 @@ class TafsirRightsTests(unittest.TestCase):
             patch("services.api.routers.tafsir.settings.llm_api_key", "test-key"),
             patch("services.api.routers.tafsir.settings.llm_model", "test-model"),
             patch("services.api.routers.tafsir.settings.llm_api_base_url", "https://llm.example.test/v1"),
+            patch("services.api.routers.tafsir.settings.llm_api_wire_api", "responses"),
             patch("services.api.routers.tafsir.get_engine", side_effect=AssertionError("database used")),
             patch("services.api.routers.tafsir.get_tafsir_json_text", return_value="النص العربي"),
             patch("services.api.routers.tafsir.translate_tafsir_to_thai", new_callable=AsyncMock, return_value="คำแปลจาก OpenAI") as translator,
@@ -178,6 +227,13 @@ class TafsirRightsTests(unittest.TestCase):
         self.assertFalse(response.json()["data"]["cached"])
         self.assertTrue(cached_response.json()["data"]["cached"])
         translator.assert_awaited_once()
+        translator.assert_awaited_once_with(
+            "النص العربي",
+            api_key="test-key",
+            model="test-model",
+            base_url="https://llm.example.test/v1",
+            wire_api="responses",
+        )
         _development_translations.pop(cache_key, None)
 
     def test_development_translation_route_is_disabled_outside_development(self):
@@ -295,6 +351,7 @@ class TafsirRightsTests(unittest.TestCase):
             api_key="test-key",
             model="test-model",
             base_url="https://llm.example.test/v1",
+            wire_api="chat_completions",
         )
 
 
@@ -320,6 +377,24 @@ class OpenAITranslationTests(unittest.IsolatedAsyncioTestCase):
             transport=httpx.MockTransport(openai_response),
         )
         self.assertEqual(result, "คำแปลภาษาไทย")
+
+    async def test_supports_responses_api_wire_format(self):
+        async def openai_response(request):
+            payload = json.loads(request.content)
+            self.assertEqual(str(request.url), "https://llm.example.test/v1/responses")
+            self.assertEqual(payload["model"], "test-model")
+            self.assertIn("input", payload)
+            return httpx.Response(200, json={"output_text": "คำแปลภาษาไทยจาก Responses API"})
+
+        result = await translate_tafsir_to_thai(
+            "Arabic source",
+            api_key="test-key",
+            model="test-model",
+            base_url="https://llm.example.test/v1",
+            wire_api="responses",
+            transport=httpx.MockTransport(openai_response),
+        )
+        self.assertEqual(result, "คำแปลภาษาไทยจาก Responses API")
 
     async def test_rejects_empty_provider_response(self):
         async def openai_response(_request):

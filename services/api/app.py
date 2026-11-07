@@ -21,7 +21,7 @@ import logging
 from datetime import datetime
 
 from .models import *
-from .routers import quran, agents, tafsir
+from .routers import quran, agents, retrieval, tafsir
 from .services import QuranAPIService, AgentOrchestratorService, EvidenceValidationService
 from .config import settings
 
@@ -79,6 +79,7 @@ app.add_middleware(
 app.include_router(quran.router, prefix="/api/v1")
 app.include_router(agents.router)
 app.include_router(tafsir.router, prefix="/api/v1")
+app.include_router(retrieval.router, prefix="/api/v1")
 
 @app.get("/health", tags=["health"])
 async def health() -> Dict[str, str]:

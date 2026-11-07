@@ -14,18 +14,16 @@ module.exports = {
     ],
   },
   experimental: {
-    serverComponents: true,
     optimizeCss: true,
     optimizePackageImports: ["@headlessui/react", "lucide-react"],
   },
   i18n: {
     locales: ["th", "ar", "en"],
     defaultLocale: "th",
-    localesSeparator: ",",
   },
-  asyncHeaders: async () => [
+  headers: async () => [
     {
-      source: "/_next/static/(*.*)",
+      source: "/_next/static/:path*",
       headers: [
         {
           key: "Cache-Control",
@@ -34,11 +32,11 @@ module.exports = {
       ],
     },
     {
-      source: "/api/(.*)",
+      source: "/api/quran/:path*",
       headers: [
         {
           key: "Cache-Control",
-          value: "public, max-age=60, stale-while-revalidate=300",
+          value: "public, max-age=3600, stale-while-revalidate=86400",
         },
       ],
     },

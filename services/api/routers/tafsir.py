@@ -158,9 +158,6 @@ def _enforce_translation_rate_limit(request: Request) -> None:
 
 
 def _translation_provider_http_exception(error: httpx.HTTPStatusError) -> HTTPException:
-    if error.response.status_code != 429:
-        return HTTPException(status_code=502, detail="OpenAI could not translate this tafsir passage")
-
     try:
         payload = error.response.json()
     except ValueError:
@@ -168,6 +165,44 @@ def _translation_provider_http_exception(error: httpx.HTTPStatusError) -> HTTPEx
     provider_error = payload.get("error", {}) if isinstance(payload, dict) else {}
     error_type = provider_error.get("type") if isinstance(provider_error, dict) else None
     error_code = provider_error.get("code") if isinstance(provider_error, dict) else None
+    status_code = error.response.status_code
+    logger.error(
+        "Translation provider returned HTTP %s (type=%s, code=%s)",
+        status_code,
+        error_type if isinstance(error_type, str) else "unknown",
+        error_code if isinstance(error_code, str) else "unknown",
+    )
+
+    if status_code in (401, 403):
+        return HTTPException(
+            status_code=502,
+            detail=(
+                "ผู้ให้บริการแปลปฏิเสธ API key กรุณาตรวจ LLM_API_KEY สำหรับ custom endpoint "
+                "หรือ OPENAI_API_KEY เมื่อเชื่อมต่อ api.openai.com"
+            ),
+        )
+    if status_code == 404:
+        return HTTPException(
+            status_code=502,
+            detail="ไม่พบ OpenAI endpoint หรือ model ที่ตั้งค่าไว้ กรุณาตรวจ LLM_API_BASE_URL และ LLM_MODEL",
+        )
+    if status_code == 400:
+        return HTTPException(
+            status_code=502,
+            detail="OpenAI ปฏิเสธรูปแบบคำขอแปล กรุณาตรวจว่า LLM_MODEL รองรับ Chat Completions",
+        )
+    if status_code >= 500:
+        return HTTPException(
+            status_code=503,
+            detail="OpenAI ขัดข้องชั่วคราว กรุณารอสักครู่แล้วลองใหม่",
+        )
+
+    if status_code != 429:
+        return HTTPException(
+            status_code=502,
+            detail=f"ผู้ให้บริการแปลปฏิเสธคำขอ (HTTP {status_code}) กรุณาตรวจการตั้งค่า OpenAI",
+        )
+
     if error_type == "insufficient_quota" or error_code in {
         "insufficient_quota",
         "credit_balance_exhausted",
@@ -226,13 +261,18 @@ def _development_passage(surah: int, ayah: int, agent_type: str) -> Dict[str, An
 
 
 async def _translate_development_passage(source_text: str) -> str:
-    if not all((
-        settings.llm_provider,
-        settings.llm_api_base_url,
-        settings.llm_api_key,
-        settings.llm_model,
-    )):
-        raise HTTPException(status_code=503, detail="LLM translation is not configured on the server")
+    api_key = settings.translation_api_key
+    provider = settings.llm_provider
+    base_url = settings.llm_api_base_url
+    model = settings.llm_model
+    if not provider or not base_url or not api_key or not model:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "LLM translation is not configured. Set LLM_API_KEY for custom providers; "
+                "OPENAI_API_KEY is used only with api.openai.com."
+            ),
+        )
     if len(source_text) > _MAX_DEVELOPMENT_SOURCE_LENGTH:
         raise HTTPException(status_code=413, detail="This tafsir passage is too long to translate")
 
@@ -240,9 +280,10 @@ async def _translate_development_passage(source_text: str) -> str:
     for chunk in split_tafsir_text(source_text):
         translations.append(await translate_tafsir_to_thai(
             chunk,
-            api_key=settings.llm_api_key,
-            model=settings.llm_model,
-            base_url=settings.llm_api_base_url,
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            wire_api=settings.llm_api_wire_api,
         ))
     return "\n\n".join(translations)
 
@@ -320,6 +361,10 @@ async def translate_development_passage(surah: int, ayah: int, agent_type: str, 
 async def translate_passage(passage_id: UUID, request: Request):
     """Translate an approved source passage to Thai and cache it in the database."""
     _enforce_translation_rate_limit(request)
+    api_key = settings.translation_api_key
+    provider = settings.llm_provider
+    base_url = settings.llm_api_base_url
+    model = settings.llm_model
     engine = get_engine()
     statement = text("""
         SELECT
@@ -361,22 +406,24 @@ async def translate_passage(passage_id: UUID, request: Request):
         raise HTTPException(status_code=403, detail="Source rights and verification must be approved before translation")
     if passage["thai_translation"]:
         return {"success": True, "data": {"thai_translation": passage["thai_translation"], "cached": True}}
-    if not all((
-        settings.llm_provider,
-        settings.llm_api_base_url,
-        settings.llm_api_key,
-        settings.llm_model,
-    )):
-        raise HTTPException(status_code=503, detail="LLM translation is not configured on the server")
+    if not provider or not base_url or not api_key or not model:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "LLM translation is not configured. Set LLM_API_KEY for custom providers; "
+                "OPENAI_API_KEY is used only with api.openai.com."
+            ),
+        )
     if len(passage["arabic_text"]) > 30000:
         raise HTTPException(status_code=413, detail="This tafsir passage is too long to translate in one request")
 
     try:
         translation = await translate_tafsir_to_thai(
             passage["arabic_text"],
-            api_key=settings.llm_api_key,
-            model=settings.llm_model,
-            base_url=settings.llm_api_base_url,
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            wire_api=settings.llm_api_wire_api,
         )
     except httpx.TimeoutException as error:
         logger.warning("OpenAI tafsir translation timed out for passage %s", passage_id)
