@@ -27,10 +27,11 @@ This repository contains the foundational architecture for QURAN AI Super WebApp
 
 ### Phase 2: Knowledge Base & Hybrid RAG ⚠️ PARTIALLY COMPLETED
 - ✅ PostgreSQL + pgvector setup
-- ✅ Shamela ingestion pipeline (structure exists, needs content)
+- ✅ Rights-gated development Tafsir ingestion pipeline (real content requires rights review)
 - ✅ Tafsir citation schemas
+- ⏸️ Quran seed and live hybrid retrieval validation (database/API credentials required)
 
-### Phase 3: Multi-Agent Tafsir Engine 🔄 IN PROGRESS
+### Phase 3: Multi-Agent Tafsir Engine ⏸️ WAITING FOR PHASE 2
 - 🔄 6 Tafsir agents implementation (models exist, need orchestration)
 
 ### Phase 4: Gamified Learning SaaS ⏸️ PENDING
@@ -122,31 +123,49 @@ This repository contains the foundational architecture for QURAN AI Super WebApp
 
 ## Next Steps
 
-### Immediate Priorities (Week 1-2)
+### Phase 2: Knowledge Base & Hybrid RAG
 
-1. **Complete Phase 2 Implementation**
-   - [x] Set up PostgreSQL with pgvector extension
-   - [x] Create database migrations for all currently implemented persistence tables
-   - [ ] Seed with initial Quran data
-   - [ ] Implement Shamela ingestion pipeline
+- [x] Set up PostgreSQL with pgvector and migrate implemented persistence tables.
+- [x] Implement and test development-only JSON/SQLite Tafsir parsing, provenance,
+  rights guards, and repeatable PostgreSQL upserts.
+- [ ] Seed and verify all 6,236 canonical Quran ayahs in a disposable development
+  database. **Blocked:** requires a running PostgreSQL instance and approved
+  Quran Foundation API client credentials; never seed production from this step.
+- [ ] Verify Arabic full-text and vector retrieval end-to-end using approved
+  source records and a configured embedding provider.
+- [ ] Import real Tafsir content only after its license, source URL, and
+  verification evidence have been reviewed.
 
-2. **Begin Phase 3 - Multi-Agent Engine**
-   - [ ] Implement agent orchestration service
-   - [ ] Create 6 agent implementations
-   - [ ] Set up evidence classification system
-   - [ ] Build disagreement matrix
+### Phase 3: Multi-Agent Tafsir Engine
 
-3. **Frontend Development**
-   - [ ] Build Next.js 14 frontend
-   - [ ] Implement 3-column responsive layout
-   - [ ] Create Quran reader with Arabic RTL
-   - [ ] Build Tafsir chat interface
+- [ ] Implement an orchestrator for the six existing scholar agents with bounded
+  concurrency, timeouts, and explicit error reporting.
+- [ ] Ground agent inputs and outputs in retrieved source passages and validate
+  citations before displaying religious claims.
+- [ ] Connect evidence labels and the scholarly disagreement matrix to validated
+  agent results; cover disagreement and missing-evidence cases with tests.
 
-4. **Integration & Testing**
-   - [ ] End-to-end API testing
-   - [ ] Frontend-backend integration
-   - [ ] Performance optimization
-   - [ ] Security hardening
+### Phase 4: Gamified Learning SaaS
+
+- [ ] Decide whether Strapi is needed for course authoring; integrate its CMS and
+  MCP workflow only after the content model and trust boundaries are defined.
+- [ ] Add validated dynamic lesson/exercise blocks with accessible rendering.
+- [ ] Persist learning progress, streaks, and gems with server-side validation
+  and idempotent updates.
+
+### Phase 5: AI Active Recall Suite
+
+- [ ] Build source-grounded flashcards and accessible flip-card study flows.
+- [ ] Build quiz generation, scoring, and review from verified Quran/Tafsir data.
+- [ ] Add a protected PDF study viewer; handle files according to access rights
+  and do not ingest or redistribute unlicensed documents.
+
+### Phase 6: Billing, Security & Production
+
+- [ ] Integrate Stripe checkout and verified, idempotent webhook processing.
+- [ ] Review authentication, rate limiting, privacy, source-rights enforcement,
+  secrets handling, and observability.
+- [ ] Run end-to-end, performance, and release checks, then deploy to Vercel.
 
 ### Dependencies Installation
 
@@ -157,7 +176,7 @@ bun install
 # Setup environment
 bun run scripts/setup-env.sh
 
-# Initialize database
+# Initialize the local development database (see database/README.md)
 bun run db:migrate
 bun run db:seed
 
