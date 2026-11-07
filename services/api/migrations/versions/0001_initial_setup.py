@@ -5,6 +5,7 @@ Revision ID: 0001_initial_setup
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+from pgvector.sqlalchemy import VECTOR
 
 revision = "0001_initial_setup"
 down_revision = None
@@ -131,7 +132,7 @@ def upgrade():
         sa.Column("source_url", sa.Text),
         sa.Column("hadith_references", sa.JSON),
         sa.Column("evidence_grade", postgresql.ENUM(name="hadith_grade", create_type=False)),
-        sa.Column("embedding", postgresql.VECTOR(1536)),
+        sa.Column("embedding", VECTOR(1536)),
         sa.Column("verification_status", postgresql.ENUM(name="evidence_level", create_type=False), nullable=False, server_default="unverified"),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP")),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("CURRENT_TIMESTAMP")),
