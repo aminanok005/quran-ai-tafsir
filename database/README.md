@@ -16,13 +16,18 @@ The Compose service uses PostgreSQL 16 with pgvector 0.8.1 and persists data in
 the `postgres_data` volume. Local defaults are database `quran_ai`, user
 `quran_ai`, and password `quran_ai_dev`; set `POSTGRES_DB`, `POSTGRES_USER`,
 and `POSTGRES_PASSWORD` in the root `.env` to override them. These defaults are
-for local development only.
+for local development only. If host port 5432 is already in use, set
+`POSTGRES_HOST_PORT` to an available port when starting the service; for example:
+
+```bash
+POSTGRES_HOST_PORT=55432 docker compose -f docker/docker-compose.yml up -d db
+```
 
 The API container connects to the `db` service automatically. For host-run
 migrations, use the equivalent localhost URL:
 
 ```bash
-DATABASE_URL=postgresql+psycopg://quran_ai:quran_ai_dev@localhost:5432/quran_ai \
+DATABASE_URL=postgresql+psycopg://quran_ai:quran_ai_dev@localhost:${POSTGRES_HOST_PORT:-5432}/quran_ai \
   bun run db:migrate
 ```
 
