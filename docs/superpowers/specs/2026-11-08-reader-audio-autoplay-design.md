@@ -36,6 +36,11 @@ translation editions `en.sahih` and `id.indonesian`.
   and stops the sequence when activated. For each ayah, finish the chosen audio
   sequence before advancing; in combined mode, recitation plays first and
   translation follows.
+- While a single-ayah sequence is playing, `Listen Audio` changes to `Stop
+  Audio` and stops it when activated. Pressing `Listen Audio` while Auto is
+  active replaces Auto with single-ayah playback from the current ayah. Pressing
+  `Auto` during single-ayah playback replaces it with continuous playback from
+  the current ayah.
 
 ## Continuous playback behavior
 
@@ -45,7 +50,10 @@ Stop automatically after the last ayah in the surah. Starting Auto clears an
 active search so all subsequent ayahs remain visible. Manual ayah or surah
 selection, a playback-mode/language change, or an explicit stop cancels the
 current sequence and speech. Pressing `Listen Audio` plays only the selected
-ayah and stops any active Auto run before starting.
+ayah and stops any active Auto run before starting. Every playback start
+cancels and cleans up the previous audio and speech before beginning, including
+when the previous sequence is a single ayah of the same mode. No two audio or
+speech sequences may overlap.
 
 Speech translation uses the browser's Web Speech API and the selected
 translation text fetched from the existing Quran route. It is not presented as
