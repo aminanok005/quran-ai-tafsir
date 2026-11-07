@@ -1,19 +1,95 @@
 import os
+import subprocess
+import sys
+import textwrap
 import unittest
+from pathlib import Path
 from unittest import mock
 
+import scripts.seed_quran_data as seed_quran_data
 from scripts.seed_quran_data import (
     EXPECTED_AYAH_COUNT,
     SURAH_AYAH_COUNTS,
+    fetch_surah_ayahs,
     get_api_token,
     get_auth_base_url,
-    fetch_surah_ayahs,
     normalize_ayah,
     validate_ayahs,
+)
+from services.api.services.quran_metadata import (
+    SURAH_AYAH_COUNTS as CANONICAL_SURAH_AYAH_COUNTS,
 )
 
 
 class QuranSeederTests(unittest.TestCase):
+    def test_seeder_file_imports_with_only_scripts_directory_on_sys_path(self):
+        repository_root = Path(__file__).resolve().parents[1]
+        scripts_directory = Path(__file__).resolve().parent
+        seeder_path = scripts_directory / "seed_quran_data.py"
+        import_script = textwrap.dedent(
+            """
+            import importlib.abc
+            import importlib.machinery
+            import runpy
+            import sys
+            import types
+            from pathlib import Path
+
+            seeder_path, scripts_directory = sys.argv[1:]
+            repository_root = Path(seeder_path).resolve().parents[1]
+            sys.path[:] = [
+                scripts_directory,
+                *(
+                    entry
+                    for entry in sys.path
+                    if entry and Path(entry).resolve() != repository_root
+                ),
+            ]
+            dotenv_stub = types.ModuleType("dotenv")
+            dotenv_stub.dotenv_values = lambda *_args, **_kwargs: {}
+            sys.modules["dotenv"] = dotenv_stub
+
+            class ApiPackageFinder(importlib.abc.MetaPathFinder):
+                packages = {
+                    "services.api": repository_root / "services" / "api",
+                    "services.api.services": (
+                        repository_root / "services" / "api" / "services"
+                    ),
+                }
+
+                def find_spec(self, fullname, path=None, target=None):
+                    package_path = self.packages.get(fullname)
+                    if package_path is None:
+                        return None
+                    spec = importlib.machinery.ModuleSpec(
+                        fullname,
+                        loader=None,
+                        is_package=True,
+                    )
+                    spec.submodule_search_locations = [str(package_path)]
+                    return spec
+
+            sys.meta_path.insert(0, ApiPackageFinder())
+            runpy.run_path(seeder_path, run_name="seed_quran_data_import_test")
+            """
+        )
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                import_script,
+                str(seeder_path),
+                str(scripts_directory),
+            ],
+            cwd=repository_root,
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_normalize_ayah_maps_only_canonical_columns(self):
         ayah = normalize_ayah(
             2,
@@ -54,6 +130,7 @@ class QuranSeederTests(unittest.TestCase):
     def test_canonical_surah_counts_sum_to_expected_total(self):
         self.assertEqual(len(SURAH_AYAH_COUNTS), 114)
         self.assertEqual(sum(SURAH_AYAH_COUNTS), EXPECTED_AYAH_COUNT)
+        self.assertIs(seed_quran_data.SURAH_AYAH_COUNTS, CANONICAL_SURAH_AYAH_COUNTS)
 
     def test_auth_base_url_matches_production_and_prelive_api_hosts(self):
         self.assertEqual(

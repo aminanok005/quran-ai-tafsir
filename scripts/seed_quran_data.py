@@ -3,20 +3,38 @@
 
 import logging
 import os
+import sys
+from collections.abc import MutableMapping
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
 
-EXPECTED_AYAH_COUNT = 6236
-SURAH_AYAH_COUNTS = (
-    7, 286, 200, 176, 120, 165, 206, 75, 129, 109, 123, 111, 43, 52, 99, 128,
-    111, 110, 98, 135, 112, 78, 118, 64, 77, 227, 93, 88, 69, 60, 34, 30, 73,
-    54, 45, 83, 182, 88, 75, 85, 54, 53, 89, 59, 37, 35, 38, 29, 18, 45, 60,
-    49, 62, 55, 78, 96, 29, 22, 24, 13, 14, 11, 11, 18, 12, 12, 30, 52, 52,
-    44, 28, 28, 20, 56, 40, 31, 50, 40, 46, 42, 29, 19, 36, 25, 22, 17, 19,
-    26, 30, 20, 15, 21, 11, 8, 8, 19, 5, 8, 8, 11, 11, 8, 3, 9, 5, 4, 7, 3,
-    6, 3, 5, 4, 5, 6,
+from dotenv import dotenv_values  # noqa: E402
+
+from services.api.services.quran_metadata import (  # noqa: E402
+    EXPECTED_AYAH_COUNT,
+    SURAH_AYAH_COUNTS,
 )
+
+
+def load_repository_environment(
+    repository_root: Path,
+    environ: MutableMapping[str, str],
+) -> None:
+    """Load local dotenv defaults without overriding shell-provided values."""
+    for filename in (".env.local", ".env"):
+        for key, value in dotenv_values(repository_root / filename).items():
+            if value is not None:
+                environ.setdefault(key, value)
+
+
+load_repository_environment(REPOSITORY_ROOT, os.environ)
+
+
 SURAH_COUNT = len(SURAH_AYAH_COUNTS)
 VERSES_PER_PAGE = 50
 VERSE_FIELDS = (

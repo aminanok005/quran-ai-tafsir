@@ -1,6 +1,6 @@
 import os
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import httpx
 from fastapi.testclient import TestClient
@@ -9,15 +9,13 @@ os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://postgres@localhost/q
 
 from services.api.app import app
 from services.api.config import Settings
-from services.api.routers import retrieval
 from services.api.services.embedding import (
     DATABASE_VECTOR_DIMENSIONS,
     EmbeddingConfigurationError,
     EmbeddingProviderError,
     embed_texts,
 )
-from services.api.services.tafsir_retrieval import SEARCH_SQL
-from services.api.services.tafsir_retrieval import _evidence_label
+from services.api.services.tafsir_retrieval import SEARCH_SQL, _evidence_label
 
 
 def embedding_settings(**overrides):
@@ -113,32 +111,14 @@ class EmbeddingClientTests(unittest.IsolatedAsyncioTestCase):
 
 
 class TafsirSearchEndpointTests(unittest.TestCase):
-    def test_search_returns_passage_trace_and_does_not_promote_evidence(self):
-        result = {
-            "passage_id": "passage-1",
-            "arabic_text": "نص",
-            "thai_translation": None,
-            "evidence_status": "UNVERIFIED",
-            "source": {"url": "https://example.test/tafsir"},
-        }
-        with (
-            patch.object(retrieval, "embed_texts", new=AsyncMock(return_value=[[0.1] * 1536])) as embed,
-            patch.object(retrieval, "get_engine", return_value=object()),
-            patch.object(retrieval, "search_tafsir", return_value=[result]) as search,
-            patch("services.api.routers.tafsir.settings.environment", "development"),
-        ):
-            with TestClient(app) as client:
-                response = client.post(
-                    "/api/v1/tafsir/search",
-                    json={"query": "คำถามอ้างอิง", "surah_number": 4, "ayah_number": 1},
-                )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["data"]["results"][0]["evidence_status"], "UNVERIFIED")
-        self.assertEqual(response.json()["data"]["results"][0]["source"]["url"], result["source"]["url"])
-        embed.assert_awaited_once()
-        self.assertEqual(search.call_args.kwargs["surah_number"], 4)
-        self.assertFalse(search.call_args.kwargs["include_development"])
+    def test_search_rejects_legacy_database_sources(self):
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/tafsir/search",
+                json={"query": "question", "surah_number": 4, "ayah_number": 1},
+            )
+        self.assertEqual(response.status_code, 410)
+        self.assertIn("Database-backed Tafsir search is retired", response.json()["error"])
 
     def test_search_requires_surah_and_ayah_together(self):
         with TestClient(app) as client:
@@ -148,18 +128,13 @@ class TafsirSearchEndpointTests(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 422)
 
-    def test_development_search_is_disabled_outside_development(self):
-        with (
-            patch("services.api.routers.retrieval.settings.environment", "production"),
-            patch.object(retrieval, "embed_texts", new=AsyncMock()) as embed,
-        ):
-            with TestClient(app) as client:
-                response = client.post(
-                    "/api/v1/tafsir/search",
-                    json={"query": "query", "include_development": True},
-                )
-        self.assertEqual(response.status_code, 403)
-        embed.assert_not_awaited()
+    def test_search_retires_development_and_production_database_sources(self):
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/v1/tafsir/search",
+                json={"query": "query", "include_development": True},
+            )
+        self.assertEqual(response.status_code, 410)
 
     def test_query_has_isolated_development_and_approved_source_filters(self):
         sql = " ".join(str(SEARCH_SQL).lower().split())

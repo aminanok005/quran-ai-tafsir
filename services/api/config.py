@@ -1,14 +1,22 @@
 # Configuration management for QURAN AI API service
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List, Dict, Any, Literal, Optional
-import os
+import json
+from pathlib import Path
+from typing import Annotated, Any, Dict, List, Literal, Optional
 from urllib.parse import urlsplit
+
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=(
+            REPOSITORY_ROOT / ".env",
+            REPOSITORY_ROOT / ".env.local",
+        ),
         case_sensitive=False,
         extra="ignore",
     )
@@ -25,7 +33,7 @@ class Settings(BaseSettings):
     workers: int = Field(default=1, validation_alias="WORKERS")
 
     # CORS
-    cors_origins: List[str] = Field(
+    cors_origins: Annotated[List[str], NoDecode] = Field(
         default=["http://localhost:3000", "http://127.0.0.1:3000"],
         validation_alias="CORS_ORIGINS",
     )
@@ -45,10 +53,16 @@ class Settings(BaseSettings):
     quran_api_client_id: str = Field(default="REPLACE_WITH_APPROVED_CLIENT_ID", validation_alias="QURAN_API_CLIENT_ID")
     quran_api_client_secret: str = Field(default="REPLACE_WITH_SECRET", validation_alias="QURAN_API_CLIENT_SECRET")
     quran_api_token_cache_ttl: int = Field(default=3300, validation_alias="QURAN_API_TOKEN_CACHE_TTL_SECONDS")
+    quran_api_tafsir_cache_ttl: int = Field(
+        default=300,
+        ge=0,
+        le=3600,
+        validation_alias="QURAN_API_TAFSIR_CACHE_TTL_SECONDS",
+    )
     quran_api_auth_base_url: Optional[str] = Field(default=None, validation_alias="QURAN_API_AUTH_BASE_URL")
     quran_api_tafsir_scope: str = Field(default="content.tafsirs.read", validation_alias="QURAN_API_TAFSIR_SCOPE")
     quran_tafsir_resource_map: Dict[str, int] = Field(
-        default_factory=lambda: {"ibn_kathir": 169},
+        default_factory=lambda: {"ibn_kathir": 168},
         validation_alias="QURAN_TAFSIR_RESOURCE_MAP",
     )
 
@@ -125,6 +139,19 @@ class Settings(BaseSettings):
 
     # QURAN AI specific settings
     default_language: str = Field(default="th", validation_alias="APP_DEFAULT_LOCALE")
-    supported_languages: List[str] = Field(default=["th", "ar", "en"], validation_alias="APP_SUPPORTED_LOCALES")
+    supported_languages: Annotated[List[str], NoDecode] = Field(
+        default=["th", "ar", "en"],
+        validation_alias="APP_SUPPORTED_LOCALES",
+    )
+
+    @field_validator("cors_origins", "supported_languages", mode="before")
+    @classmethod
+    def parse_string_lists(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip()
+        if normalized.startswith("["):
+            return json.loads(normalized)
+        return [item.strip() for item in normalized.split(",") if item.strip()]
 
 settings = Settings()

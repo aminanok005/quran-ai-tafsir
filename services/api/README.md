@@ -2,44 +2,45 @@
 
 QURAN AI workspace component.
 
-## Database-backed tafsir translations
+## Quran Foundation Tafsir runtime
 
 Run the API from the repository root with `uvicorn services.api.main:app --reload`.
-Set `DATABASE_URL` and `CORS_ORIGINS` in the API server's environment before
-starting it. The API reads `LLM_PROVIDER`, `LLM_API_BASE_URL`, `LLM_MODEL`, and
-the API key from the shell environment at runtime. Use `LLM_API_KEY` for
-OpenAI-compatible custom endpoints (including local routers). `OPENAI_API_KEY`
-is used only with `https://api.openai.com`; it is not sent to custom endpoints.
-Set `LLM_API_WIRE_API=responses` when the endpoint uses the Responses API;
-otherwise it defaults to `chat_completions`. Exported shell values take
-precedence over `.env` values.
+The API loads repository-root `.env` and `.env.local` files regardless of the
+current working directory. `.env.local` overrides `.env`, while exported shell
+variables take precedence over both. Set `DATABASE_URL` and `CORS_ORIGINS` in
+one of these sources before starting the API. The API reads `LLM_PROVIDER`,
+`LLM_API_BASE_URL`, `LLM_MODEL`, and the API key from the same configuration.
+Use `LLM_API_KEY` for OpenAI-compatible custom endpoints (including local
+routers). `OPENAI_API_KEY` is used only with `https://api.openai.com`; it is not
+sent to custom endpoints. Set `LLM_API_WIRE_API=responses` when the endpoint
+uses the Responses API; otherwise it defaults to `chat_completions`.
 
 The Reader uses `GET /api/v1/tafsir/passages/{surah}/{ayah}?agent_type=...` to
-load an imported source passage. Selecting “แสดงตัฟซีรและแปลเป็นไทย” uses the
-stored Thai translation when available; otherwise the API translates the Arabic
-passage with OpenAI and caches the result in `tafsir_passages.thai_translation`.
+fetch each original passage from the authenticated Quran Foundation Content API
+v4. Raw Tafsir is cached in API process memory for
+`QURAN_API_TAFSIR_CACHE_TTL_SECONDS` (default 300 seconds), never written to
+`tafsir_passages` or another database table. The Reader loads saved Thai AI
+translations only when the corresponding source-permission record is approved,
+verified, licensed, and has verification evidence and a source URL.
 
 The LLM key is used only by the API and is never sent to the browser. Translation
 is limited to five requests per minute per API worker and is blocked unless the
-book and its source-permission record are approved, verified, and have a license,
-source URL, and verification evidence. Unapproved source text can still be viewed
-in Arabic, but its cached Thai translation is not returned. Very long passages
-(>30,000 characters) require editorial segmentation before translation.
+source-permission record is approved, verified, and has a license, source URL,
+and verification evidence. Unapproved source text can still be viewed, but its
+cached Thai translation is not returned. Very long passages (>30,000 characters)
+require editorial segmentation before translation.
+
+For local Studio generation, configure `ENVIRONMENT=development`,
+`LLM_API_BASE_URL` to a loopback provider endpoint, `LLM_MODEL`, and
+`LLM_API_WIRE_API=responses` when the endpoint uses the Responses API.
+`LLM_API_KEY` is server-only and must never be included in client code, logs, or
+error responses. The workspace generation route rejects production mode and
+non-loopback provider hosts.
 
 The JSON importer remains separately rights-gated. Do not mark a source as
 approved or import it into a production database until its rights and
-verification evidence have been reviewed.
-
-### Tafsir source in development
-
-When `ENVIRONMENT=development` (the default), the Reader looks for a cached
-passage in PostgreSQL first. On a cache miss, the API requests that single ayah
-from the authenticated Quran Foundation Content API v4 Tafsir endpoint and
-caches the response in PostgreSQL. Cached API passages are always marked
-`development_only`/`unverified`; production never fetches or returns these
-records. The development cache does not assert that the source is licensed for
-reuse. Review rights, attribution, and verification evidence before promoting
-any source to production or enabling translation.
+verification evidence have been reviewed. Imported/local Tafsir is not a Reader
+fallback.
 
 Configure the Quran Foundation credentials on the API server only:
 
@@ -48,23 +49,47 @@ QURAN_API_BASE_URL=https://apis-prelive.quran.foundation
 QURAN_API_CLIENT_ID=<pre-live client ID>
 QURAN_API_CLIENT_SECRET=<pre-live client secret>
 QURAN_API_TAFSIR_SCOPE=content.tafsirs.read
-QURAN_TAFSIR_RESOURCE_MAP={"ibn_kathir":169}
+QURAN_API_TAFSIR_CACHE_TTL_SECONDS=300
+QURAN_TAFSIR_RESOURCE_MAP={"ibn_kathir":168}
 ```
 
 Use the production API host with production credentials, or the pre-live host
 with pre-live credentials; OAuth is selected to match the API host. The default
-resource mapping is Ibn Kathir English (resource 169). Override it with a JSON
-object mapping the application's scholar IDs to resource IDs available to your
-Quran Foundation account. Confirm IDs and languages against the API's current
-resource list rather than assuming IDs from third-party examples. Keep all
-credentials server-side.
+resource mapping is Ibn Kathir English (resource 168). Override it with a JSON
+object mapping scholar IDs to resources enabled for your Quran Foundation
+account, and verify resource IDs/languages against that account. Keep credentials
+server-side. The Quran seeding CLI is a separate development-only tool; it does
+not run automatically when the API starts.
 
-Translation of a development-only API passage remains blocked until its source
-book and permission record are explicitly approved, verified, and licensed.
-The existing JSON importer and local JSON corpus remain separate tools for
-development-only vector ingestion; they are not used as the Reader's Tafsir
-runtime fallback. Long approved passages are split into word-boundary chunks
-and translated in order.
+`POST /api/v1/tafsir/passages/api/{surah}/{ayah}/translate?agent_type=...`
+translates a live API passage and saves only the generated Thai text, its source
+hash/reference, resource/ayah identifiers, model, and timestamps in
+`tafsir_api_translations`. It never persists the raw source passage.
+`POST /api/v1/tafsir/passages/{passage_id}/translate` returns HTTP 410; clients
+must use the API-passage route. Apply migrations before using saved translations:
+
+```bash
+DATABASE_URL=<development-database-url> \
+  python3 -m alembic -c services/api/alembic.ini upgrade head
+```
+
+The local JSON importer and vector search remain development/research tooling,
+not a source fallback for the Reader. Do not use their imported Tafsir as
+current source text.
+
+### Grounded agent explanations
+
+The versioned `POST /api/v1/tafsir/agents/explain` endpoint accepts `ayah_id`
+as a query parameter and `agent_types` plus optional `context` in the JSON body.
+The API fetches each configured scholar passage directly from Quran Foundation,
+and only supplies it to agents when its source-permission record is approved,
+verified, and licensed. It returns only outputs whose citations resolve to those
+live passages. Citation records include canonical references and passage-level
+`VERIFIED` status; generated explanations are labeled `SOURCE-ATTRIBUTED`, never
+`VERIFIED`. The workspace's “Ask AI” view displays these labels and citations.
+`POST /api/v1/tafsir/agents/compare` remains unavailable until claim-level
+scholarly positions can be tied to reviewable evidence; it returns an explicit
+unavailable response rather than inferring disagreement.
 
 ## Study workspace: Notes and Studio
 
@@ -86,49 +111,41 @@ user account or account recovery.
 `POST /api/v1/workspace/artifacts` creates a source-grounded Report, Slides,
 Video storyboard, Audio script, Flashcards, three-choice Quiz, Infographic, or
 Comparison table using the server-side LLM configuration above. Tafsir context
-is loaded server-side and included only when both the book and its source
-permission record are approved and verified; client-supplied approval flags or
+is fetched from Quran Foundation server-side and included only when its source
+permission record is approved and verified; client-supplied approval flags or
 Tafsir text are never trusted. Quran citations are included with the generated
 content, which is labeled `AI-SYNTHESIS`. Audio uses the browser's speech
 synthesis; Video is an editable/exportable storyboard, not a rendered video
 file. Studio generation is limited to five requests per minute per browser.
+
+Audio, Quiz, and Infographic generation calls the configured provider only after
+the user clicks **Generate**; mounting the workspace, changing a source, or
+choosing an artifact kind does not call it. If Tafsir is selected, its passage
+must already be approved and present in the short-lived API cache. A cache miss
+or permission failure is returned to the user without fetching a replacement or
+falling back to database/JSON Tafsir. Generated artifacts are not persisted
+automatically; **Save to Note** stores the complete artifact envelope in the
+browser-identity-scoped Notes service. Automated tests mock provider and Quran
+transports and make no external requests.
 
 If translation returns HTTP 429 with an exhausted-credit/quota message, the
 configured provider account must have available API billing/usage quota before
 translation can succeed. This is separate from the ChatGPT subscription. A
 temporary request-rate limit will instead ask the user to wait and retry.
 
-## Tafsir vector retrieval
+## Retired database-backed Tafsir retrieval
 
-The canonical initial migration already enables pgvector and creates
-`tafsir_passages.embedding vector(1536)` with a cosine HNSW index. No new table
-or migration is needed for semantic lookup. The `POST /api/v1/tafsir/search`
-endpoint accepts a query, optional paired surah/ayah filters, optional scholar
-filter, and a bounded `top_k`; it returns source references, similarity, and
-the stored evidence status. Production searches include only explicitly
-approved and verified source/book records. Development data is isolated behind
-`include_development=true`, is available only when `ENVIRONMENT=development`,
-and is never eligible for production results. Thai text remains hidden unless
-the existing source-rights checks allow its disclosure. Search is limited to 30
-requests per minute per API worker to bound embedding usage.
+`POST /api/v1/tafsir/search` returns HTTP 410. The previous endpoint searched
+`tafsir_passages` and could serve imported source text, so it is retired rather
+than used as a fallback for current Tafsir. Any future search feature must ground
+results in Quran Foundation API content and must not read raw Tafsir from the
+legacy corpus.
 
-Configure embeddings independently from the translation model:
+The embedding and local-vector ingestion utilities remain only for isolated
+development/research work and tests; they are not part of Reader, Ask AI, or
+Studio runtime paths.
 
-```text
-EMBEDDING_PROVIDER=openai
-EMBEDDING_API_BASE_URL=https://api.openai.com/v1
-EMBEDDING_API_KEY=<server-side embedding key>
-EMBEDDING_MODEL=text-embedding-3-small
-VECTOR_DIMENSIONS=1536
-```
-
-An OpenAI-compatible provider can be used by setting
-`EMBEDDING_PROVIDER=openai_compatible` and its HTTPS base URL. Plain HTTP is
-restricted to loopback addresses. The API does not reuse an LLM/OpenAI
-translation key as an embedding credential, and request text or credentials are
-not logged.
-
-### Development-only vector ingestion
+### Development-only vector ingestion (offline research)
 
 The existing local JSON corpus can be checked without external calls or database
 writes:

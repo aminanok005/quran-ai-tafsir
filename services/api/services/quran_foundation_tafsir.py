@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
 import html
 import re
 import time
+from dataclasses import dataclass
+from threading import Lock
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-
 
 AUTH_BASE_URLS = {
     "apis.quran.foundation": "https://oauth2.quran.foundation",
@@ -61,6 +62,7 @@ class QuranFoundationTafsirClient:
         scope: str = "content.tafsirs.read",
         auth_base_url: str | None = None,
         token_cache_ttl: int = 3300,
+        passage_cache_ttl: int = 300,
         transport: httpx.AsyncBaseTransport | None = None,
     ):
         self.api_base_url = api_base_url.rstrip("/")
@@ -78,10 +80,14 @@ class QuranFoundationTafsirClient:
         self.scope = scope
         self.auth_url = f"{resolve_auth_base_url(self.api_base_url, auth_base_url)}/oauth2/token"
         self.token_cache_ttl = token_cache_ttl
+        self.passage_cache_ttl = max(0, passage_cache_ttl)
         self.transport = transport
         self._access_token: str | None = None
         self._token_expires_at = 0.0
         self._token_lock: Any = None
+        self._passage_cache: dict[tuple[int, int, int], tuple[float, QuranFoundationTafsir]] = {}
+        self._passage_locks: dict[tuple[int, int, int], asyncio.Lock] = {}
+        self._passage_locks_guard = Lock()
 
     async def _get_access_token(self) -> str:
         now = time.monotonic()
@@ -129,7 +135,48 @@ class QuranFoundationTafsirClient:
             self._token_expires_at = time.monotonic() + min(ttl, self.token_cache_ttl)
             return token
 
+    def get_cached_ayah(
+        self,
+        resource_id: int,
+        surah: int,
+        ayah: int,
+    ) -> QuranFoundationTafsir | None:
+        cache_key = (resource_id, surah, ayah)
+        cached = self._passage_cache.get(cache_key)
+        if cached is None:
+            return None
+        expires_at, passage = cached
+        if time.monotonic() >= expires_at:
+            self._passage_cache.pop(cache_key, None)
+            return None
+        return passage
+
     async def fetch_ayah(self, resource_id: int, surah: int, ayah: int) -> QuranFoundationTafsir:
+        cache_key = (resource_id, surah, ayah)
+        cached = self._passage_cache.get(cache_key)
+        if cached and time.monotonic() < cached[0]:
+            return cached[1]
+
+        with self._passage_locks_guard:
+            passage_lock = self._passage_locks.setdefault(cache_key, asyncio.Lock())
+        async with passage_lock:
+            cached = self._passage_cache.get(cache_key)
+            if cached and time.monotonic() < cached[0]:
+                return cached[1]
+            passage = await self._fetch_ayah_uncached(resource_id, surah, ayah)
+            if self.passage_cache_ttl:
+                self._passage_cache[cache_key] = (
+                    time.monotonic() + self.passage_cache_ttl,
+                    passage,
+                )
+            return passage
+
+    async def _fetch_ayah_uncached(
+        self,
+        resource_id: int,
+        surah: int,
+        ayah: int,
+    ) -> QuranFoundationTafsir:
         token = await self._get_access_token()
         verse_key = f"{surah}:{ayah}"
         async with httpx.AsyncClient(

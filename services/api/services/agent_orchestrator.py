@@ -5,33 +5,44 @@ Coordinates all 6 Tafsir agents for comprehensive analysis.
 Implements hybrid RAG pipeline and evidence validation.
 """
 
-from typing import Dict, List, Any, Optional
-from datetime import datetime
 import asyncio
 import logging
-from sqlalchemy.orm import Session
+import time
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-from ..agents.base_agent import BaseTafsirAgent
-from ..agents.ibn_kathir_agent import IbnKathirAgent
-from ..agents.al_tabari_agent import AlTabariAgent
 from ..agents.al_qurtubi_agent import AlQurtubiAgent
-from ..agents.ibn_ashur_agent import IbnAshurAgent
 from ..agents.al_saadi_agent import AlSaadiAgent
+from ..agents.al_tabari_agent import AlTabariAgent
 from ..agents.al_zuhayli_agent import AlZuhayliAgent
-from ..models import EvidenceLevel
+from ..agents.base_agent import BaseTafsirAgent
+from ..agents.ibn_ashur_agent import IbnAshurAgent
+from ..agents.ibn_kathir_agent import IbnKathirAgent
 
 logger = logging.getLogger(__name__)
 
 class AgentOrchestratorService:
     """Orchestrates 6 specialized Tafsir agents with evidence validation."""
 
-    def __init__(self):
-        self.agents: Dict[str, BaseTafsirAgent] = {}
-        self._initialize_agents()
+    def __init__(
+        self,
+        agents: Optional[Dict[str, BaseTafsirAgent]] = None,
+        *,
+        max_concurrency: int = 3,
+        timeout_seconds: float = 30,
+    ):
+        if max_concurrency < 1:
+            raise ValueError("max_concurrency must be at least one")
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        self.agents = agents if agents is not None else self._create_agents()
+        self.max_concurrency = max_concurrency
+        self.timeout_seconds = timeout_seconds
 
-    def _initialize_agents(self):
-        """Initialize all 6 Tafsir agents."""
-        self.agents = {
+    @staticmethod
+    def _create_agents() -> Dict[str, BaseTafsirAgent]:
+        """Create the six supported Tafsir agents."""
+        return {
             "ibn_kathir": IbnKathirAgent(),
             "al_tabari": AlTabariAgent(),
             "al_qurtubi": AlQurtubiAgent(),
@@ -45,224 +56,165 @@ class AgentOrchestratorService:
         surah: int,
         ayah: int,
         agent_types: List[str],
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        *,
+        source_passages: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """Execute analysis using specified agents for a specific ayah."""
+        """Execute bounded, source-grounded analysis for a specific ayah."""
+        if not 1 <= surah <= 114 or not 1 <= ayah <= 200:
+            raise ValueError("Surah must be 1-114 and ayah must be 1-200")
+        if not agent_types:
+            raise ValueError("At least one agent must be selected")
+        if len(set(agent_types)) != len(agent_types):
+            raise ValueError("Agent types must be unique")
+        unknown_agents = sorted(set(agent_types) - self.agents.keys())
+        if unknown_agents:
+            raise ValueError(f"Unknown agent types: {', '.join(unknown_agents)}")
 
-        if not context:
-            context = {}
+        trusted_passages = self._trusted_passages(source_passages or [])
+        if not trusted_passages:
+            raise ValueError("No approved, verified source passages are available")
 
-        context.update({
+        agent_context = dict(context or {})
+        agent_context.update({
             "surah": surah,
             "ayah": ayah,
+            "source_passages": trusted_passages,
             "timestamp": datetime.now().isoformat()
         })
 
-        results = {
+        started = time.perf_counter()
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+
+        async def run_agent(agent_type: str) -> tuple[str, Dict[str, Any], float]:
+            agent = self.agents[agent_type]
+            started_agent = time.perf_counter()
+            try:
+                async with semaphore:
+                    output = await asyncio.wait_for(
+                        agent.explain_ayah(surah, ayah, dict(agent_context)),
+                        timeout=self.timeout_seconds,
+                    )
+                if (
+                    not isinstance(output, dict)
+                    or output.get("ayah_id") != f"{surah}:{ayah}"
+                    or not output.get("explanation")
+                ):
+                    raise ValueError("Agent returned an invalid response")
+                citations = self._canonical_citations(output, trusted_passages)
+                if citations is None:
+                    return agent_type, {
+                        "status": "failed",
+                        "error": "Agent citations did not match approved source passages",
+                    }, time.perf_counter() - started_agent
+                return agent_type, {
+                    **output,
+                    "citations": citations,
+                    "evidence_level": "SOURCE-ATTRIBUTED",
+                }, time.perf_counter() - started_agent
+            except asyncio.TimeoutError:
+                logger.warning("Agent %s timed out", agent_type)
+                return agent_type, {
+                    "status": "failed",
+                    "error": "Agent timed out",
+                }, time.perf_counter() - started_agent
+            except Exception as error:
+                logger.warning(
+                    "Agent %s failed (%s)",
+                    agent_type,
+                    type(error).__name__,
+                )
+                return agent_type, {
+                    "status": "failed",
+                    "error": "Agent execution failed",
+                }, time.perf_counter() - started_agent
+
+        settled = await asyncio.gather(*(run_agent(agent_type) for agent_type in agent_types))
+        outputs = {agent_type: output for agent_type, output, _ in settled}
+        succeeded = [
+            agent_type
+            for agent_type, output, _ in settled
+            if output.get("status") != "failed" and "error" not in output
+        ]
+        cited_ids = {
+            citation["passage_id"]
+            for agent_type in succeeded
+            for citation in outputs[agent_type]["citations"]
+        }
+        source_ids = {source["passage_id"] for source in trusted_passages}
+        source_count = len(cited_ids & source_ids)
+        evidence_summary = {
+            "total_sources": source_count,
+            "verified_sources": source_count,
+            "unverified_sources": 0,
+            "ai_synthesis": 0,
+        }
+
+        return {
             "ayah_id": f"{surah}:{ayah}",
-            "agents_executed": [],
-            "agent_outputs": {},
+            "agents_executed": succeeded,
+            "agent_outputs": outputs,
             "comparative_analysis": None,
-            "evidence_summary": {
-                "total_sources": 0,
-                "verified_sources": 0,
-                "unverified_sources": 0,
-                "ai_synthesis": 0
-            },
-            "processing_time": 0,
+            "evidence_summary": evidence_summary,
+            "processing_time": time.perf_counter() - started,
             "created_at": datetime.now().isoformat()
         }
 
-        # Execute each requested agent
-        for agent_type in agent_types:
-            if agent_type not in self.agents:
-                logger.warning(f"Agent type {agent_type} not found")
-                continue
+    @staticmethod
+    def _trusted_passages(passages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return [
+            passage
+            for passage in passages
+            if isinstance(passage, dict)
+            and isinstance(passage.get("passage_id"), str)
+            and passage.get("permission_status") == "approved"
+            and passage.get("verification_status") == "verified"
+            and passage.get("license")
+            and passage.get("verification_evidence")
+            and passage.get("source_reference")
+        ]
 
-            try:
-                start_time = datetime.now()
-                agent = self.agents[agent_type]
-
-                # Get agent explanation
-                explanation = await agent.explain_ayah(surah, ayah, context)
-
-                # Track execution
-                results["agents_executed"].append(agent_type)
-                results["agent_outputs"][agent_type] = explanation
-
-                # Update evidence summary
-                evidence_level = explanation.get("evidence_level", "UNVERIFIED")
-                if evidence_level == "VERIFIED":
-                    results["evidence_summary"]["verified_sources"] += 1
-                elif evidence_level == "UNVERIFIED":
-                    results["evidence_summary"]["unverified_sources"] += 1
-                elif evidence_level == "AI-SYNTHESIS":
-                    results["evidence_summary"]["ai_synthesis"] += 1
-
-                execution_time = (datetime.now() - start_time).total_seconds()
-                results["processing_time"] += execution_time
-
-                logger.info(f"Agent {agent_type} completed analysis in {execution_time:.2f}s")
-
-            except Exception as e:
-                logger.error(f"Agent {agent_type} failed: {e}")
-                results["agent_outputs"][agent_type] = {
-                    "error": str(e),
-                    "status": "failed"
-                }
-
-        # Generate comparative analysis if multiple agents executed
-        if len(results["agents_executed"]) > 1:
-            results["comparative_analysis"] = await self._generate_comparative_analysis(
-                results["agent_outputs"], surah, ayah
-            )
-
-        return results
+    @staticmethod
+    def _canonical_citations(
+        output: Dict[str, Any],
+        source_passages: List[Dict[str, Any]],
+    ) -> Optional[List[Dict[str, Any]]]:
+        citations = output.get("citations")
+        if not isinstance(citations, list) or not citations:
+            return None
+        allowed_sources = {
+            passage["passage_id"]: passage for passage in source_passages
+        }
+        canonical_citations = []
+        for citation in citations:
+            if not isinstance(citation, dict):
+                return None
+            passage_id = citation.get("passage_id")
+            source = allowed_sources.get(passage_id) if isinstance(passage_id, str) else None
+            if source is None:
+                return None
+            canonical_citations.append({
+                "passage_id": passage_id,
+                "reference": {
+                    "book": source.get("book_title"),
+                    "scholar": source.get("scholar_name"),
+                    "volume": source.get("volume"),
+                    "page": source.get("page"),
+                    "edition": source.get("edition"),
+                    "url": source["source_reference"],
+                },
+                "evidence_status": "VERIFIED",
+            })
+        return canonical_citations
 
     async def _generate_comparative_analysis(
         self,
         agent_outputs: Dict[str, Any],
         surah: int,
-        ayah: int
-    ) -> Dict[str, Any]:
-        """Generate comparative analysis across multiple agents."""
-
-        valid_agents = {k: v for k, v in agent_outputs.items() 
-                       if "error" not in v and v.get("status") != "failed"}
-
-        if len(valid_agents) < 2:
-            return None
-
-        # Analyze agreements and disagreements
-        agreements = {}
-        disagreements = {}
-        comparison_points = []
-
-        agent_types = list(valid_agents.keys())
-
-        for i, agent1_type in enumerate(agent_types):
-            for j, agent2_type in enumerate(agent_types):
-                if i >= j:
-                    continue
-
-                agent1_output = valid_agents[agent1_type]
-                agent2_output = valid_agents[agent2_type]
-
-                # Analyze similarities and differences
-                similarity_score = await self._calculate_similarity(
-                    agent1_output, agent2_output, agent1_type, agent2_type
-                )
-
-                if similarity_score > 0.7:
-                    if agent1_type not in agreements:
-                        agreements[agent1_type] = []
-                    agreements[agent1_type].append(agent2_type)
-                else:
-                    if agent1_type not in disagreements:
-                        disagreements[agent1_type] = []
-                    disagreements[agent1_type].append(agent2_type)
-
-                # Create comparison point
-                comparison_points.append({
-                    "agent1": agent1_type,
-                    "agent2": agent2_type,
-                    "topic": f"Tafsir interpretation for {surah}:{ayah}",
-                    "similarity": similarity_score,
-                    "agreement": similarity_score > 0.7,
-                    "key_differences": await self._find_key_differences(
-                        agent1_output, agent2_output, agent1_type, agent2_type
-                    )
-                })
-
-        return {
-            "total_agents": len(valid_agents),
-            "agreements": agreements,
-            "disagreements": disagreements,
-            "comparison_points": comparison_points,
-            "consensus_level": self._calculate_consensus_level(agreements, disagreements),
-            "created_at": datetime.now().isoformat()
-        }
-
-    async def _calculate_similarity(
-        self,
-        output1: Dict[str, Any],
-        output2: Dict[str, Any],
-        agent1_type: str,
-        agent2_type: str
-    ) -> float:
-        """Calculate similarity score between two agent outputs."""
-
-        # Simple similarity calculation based on evidence levels and key points
-        similarity = 0.0
-        factors = 0
-
-        # Evidence level similarity
-        if output1.get("evidence_level") == output2.get("evidence_level"):
-            similarity += 0.5
-            factors += 1
-
-        # Methodology similarity (based on agent types)
-        if agent1_type in ["ibn_kathir", "al_qurtubi"] and agent2_type in ["ibn_kathir", "al_qurtubi"]:
-            similarity += 0.5
-            factors += 1
-        elif agent1_type in ["al_tabari", "ibn_ashur"] and agent2_type in ["al_tabari", "ibn_ashur"]:
-            similarity += 0.5
-            factors += 1
-        elif agent1_type in ["al_saadi", "al_zuhayli"] and agent2_type in ["al_saadi", "al_zuhayli"]:
-            similarity += 0.5
-            factors += 1
-
-        return similarity / max(factors, 1)
-
-    async def _find_key_differences(
-        self,
-        output1: Dict[str, Any],
-        output2: Dict[str, Any],
-        agent1_type: str,
-        agent2_type: str
-    ) -> List[str]:
-        """Find key differences between two agent outputs."""
-
-        differences = []
-
-        # Compare methodologies
-        if agent1_type == "al_qurtubi" and agent2_type == "al_tabari":
-            differences.extend([
-                "Al-Qurtubi focuses on legal rulings, Al-Tabari on historical narratives",
-                "Different approaches to textual interpretation",
-                "Distinct sources of authority"
-            ])
-        elif agent1_type == "ibn_ashur" and agent2_type == "al_saadi":
-            differences.extend([
-                "Ibn Ashur emphasizes rhetoric and Maqasid",
-                "Al-Sa'di focuses on clear spiritual guidance",
-                "Different levels of technical depth"
-            ])
-        else:
-            differences.append("Different methodological approaches to Tafsir")
-
-        return differences
-
-    def _calculate_consensus_level(
-        self,
-        agreements: Dict[str, List[str]],
-        disagreements: Dict[str, List[str]]
-    ) -> float:
-        """Calculate overall consensus level across agents."""
-
-        total_pairs = 0
-        agreeing_pairs = 0
-
-        for agent1, agent2_list in agreements.items():
-            for agent2 in agent2_list:
-                total_pairs += 1
-                agreeing_pairs += 1
-
-        for agent1, agent2_list in disagreements.items():
-            for agent2 in agent2_list:
-                total_pairs += 1
-
-        return agreeing_pairs / max(total_pairs, 1)
+        ayah: int,
+    ) -> Optional[Dict[str, Any]]:
+        """Do not infer scholarly agreement from metadata or agent names."""
+        return None
 
     def get_all_agents_info(self) -> Dict[str, Any]:
         """Get information about all available agents."""
@@ -322,40 +274,10 @@ class AgentOrchestratorService:
         ayah_range: tuple[int, int],
         card_count: int = 10
     ) -> List[Dict[str, Any]]:
-        """Generate flashcards from agent analyses."""
-
-        flashcards = []
-        min_ayah, max_ayah = ayah_range
-
-        for ayah_num in range(min_ayah, min(max_ayah + 1, min_ayah + card_count)):
-            # Get comprehensive analysis from all agents
-            agent_outputs = await self.execute_agent_analysis(
-                surah, ayah_num, list(self.agents.keys())
-            )
-
-            # Create flashcard from the most verified explanation
-            best_explanation = None
-            best_quality = 0.0
-
-            for agent_type, output in agent_outputs["agent_outputs"].items():
-                if "error" not in output and output.get("quality_score", 0) > best_quality:
-                    best_explanation = output
-                    best_quality = output.get("quality_score", 0)
-
-            if best_explanation:
-                flashcard = {
-                    "ayah": f"{surah}:{ayah_num}",
-                    "front_arabic": best_explanation.get("arabic_original", ""),
-                    "front_thai": best_explanation.get("thai_translation", ""),
-                    "back_analysis": best_explanation.get("analysis", ""),
-                    "source": best_explanation.get("scholar", ""),
-                    "evidence_level": best_explanation.get("evidence_level", "UNVERIFIED"),
-                    "key_points": best_explanation.get("key_points", []),
-                    "created_at": datetime.now().isoformat()
-                }
-                flashcards.append(flashcard)
-
-        return flashcards
+        """Flashcard generation is unavailable until it can use approved sources."""
+        raise NotImplementedError(
+            "Source-grounded flashcard generation is not available yet"
+        )
 
     async def generate_quiz(
         self,
@@ -363,33 +285,7 @@ class AgentOrchestratorService:
         question_count: int = 5,
         difficulty: str = "intermediate"
     ) -> Dict[str, Any]:
-        """Generate AI quiz questions based on agent analyses."""
-
-        quiz = {
-            "surah": surah,
-            "total_questions": question_count,
-            "difficulty": difficulty,
-            "questions": [],
-            "created_at": datetime.now().isoformat()
-        }
-
-        # Generate questions based on agent outputs
-        for i in range(min(question_count, 5)):
-            question = {
-                "id": i + 1,
-                "type": "multiple_choice",
-                "question": f"What is the primary focus of {surah}:{i+1} according to classical scholars?",
-                "options": [
-                    "Historical narrative",
-                    "Legal rulings",
-                    "Linguistic analysis",
-                    "Spiritual guidance"
-                ],
-                "correct_answer": 0,
-                "explanation": "Based on comprehensive agent analysis",
-                "difficulty": difficulty,
-                "created_at": datetime.now().isoformat()
-            }
-            quiz["questions"].append(question)
-
-        return quiz
+        """Quiz generation is unavailable until every answer can be cited."""
+        raise NotImplementedError(
+            "Source-grounded quiz generation is not available yet"
+        )
