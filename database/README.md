@@ -51,6 +51,14 @@ process environment using your local secret-management method, then run:
 bun run db:seed
 ```
 
+The seeder pairs production and pre-live API hosts with their matching OAuth
+hosts. Full-corpus seeding requires approved production credentials: the
+pre-live Quran dataset currently contains only Al-Fatihah and Al-Baqarah, so
+the seeder will reject it before writing. New backend apps use the
+`content.quran.read` scope by default; set `QURAN_API_CONTENT_SCOPE=content` for
+credentials approved for the legacy `content` scope. Set
+`QURAN_API_AUTH_BASE_URL` only when using a custom API host.
+
 The seeder uses the idempotent `(surah_number, ayah_number)` key. It must not be
 run against production without confirming the source license and target database.
 

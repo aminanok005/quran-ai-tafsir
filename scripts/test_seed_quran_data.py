@@ -5,6 +5,8 @@ from unittest import mock
 from scripts.seed_quran_data import (
     EXPECTED_AYAH_COUNT,
     SURAH_AYAH_COUNTS,
+    get_api_token,
+    get_auth_base_url,
     fetch_surah_ayahs,
     normalize_ayah,
     validate_ayahs,
@@ -52,6 +54,46 @@ class QuranSeederTests(unittest.TestCase):
     def test_canonical_surah_counts_sum_to_expected_total(self):
         self.assertEqual(len(SURAH_AYAH_COUNTS), 114)
         self.assertEqual(sum(SURAH_AYAH_COUNTS), EXPECTED_AYAH_COUNT)
+
+    def test_auth_base_url_matches_production_and_prelive_api_hosts(self):
+        self.assertEqual(
+            get_auth_base_url("https://apis.quran.foundation"),
+            "https://oauth2.quran.foundation",
+        )
+        self.assertEqual(
+            get_auth_base_url("https://apis-prelive.quran.foundation/content/api/v4"),
+            "https://prelive-oauth2.quran.foundation",
+        )
+
+    def test_get_api_token_uses_oauth2_basic_auth_and_configured_scope(self):
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "QURAN_API_CLIENT_ID": "test-client",
+                    "QURAN_API_CLIENT_SECRET": "test-secret",
+                    "QURAN_API_CONTENT_SCOPE": "content",
+                },
+                clear=True,
+            ),
+            mock.patch(
+                "scripts.seed_quran_data.QURAN_API_BASE_URL",
+                "https://apis.quran.foundation",
+            ),
+            mock.patch("requests.post") as post,
+        ):
+            post.return_value.json.return_value = {"access_token": "test-token"}
+
+            token = get_api_token()
+
+        self.assertEqual(token, "test-token")
+        post.assert_called_once_with(
+            "https://oauth2.quran.foundation/oauth2/token",
+            auth=("test-client", "test-secret"),
+            data={"grant_type": "client_credentials", "scope": "content"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=30,
+        )
 
     @mock.patch.dict(os.environ, {"QURAN_API_CLIENT_ID": "test-client"})
     @mock.patch("requests.get")

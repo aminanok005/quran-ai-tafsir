@@ -4,6 +4,7 @@
 import logging
 import os
 from typing import Any
+from urllib.parse import urlsplit
 
 
 EXPECTED_AYAH_COUNT = 6236
@@ -26,6 +27,10 @@ QURAN_API_BASE_URL = os.environ.get(
     "QURAN_API_BASE_URL",
     "https://apis.quran.foundation",
 ).rstrip("/")
+QURAN_API_AUTH_BASE_URLS = {
+    "apis.quran.foundation": "https://oauth2.quran.foundation",
+    "apis-prelive.quran.foundation": "https://prelive-oauth2.quran.foundation",
+}
 CONTENT_API_BASE_URL = (
     QURAN_API_BASE_URL
     if QURAN_API_BASE_URL.endswith("/content/api/v4")
@@ -58,6 +63,21 @@ INSERT_AYAH_SQL = """
 """
 
 logger = logging.getLogger(__name__)
+
+
+def get_auth_base_url(api_base_url: str) -> str:
+    """Resolve the matching Quran Foundation OAuth host."""
+    configured_url = os.environ.get("QURAN_API_AUTH_BASE_URL")
+    if configured_url:
+        return configured_url.rstrip("/")
+
+    api_host = urlsplit(api_base_url).hostname
+    auth_base_url = QURAN_API_AUTH_BASE_URLS.get(api_host or "")
+    if auth_base_url is None:
+        raise RuntimeError(
+            "Set QURAN_API_AUTH_BASE_URL for this Quran Foundation API host"
+        )
+    return auth_base_url
 
 
 def normalize_ayah(surah_number: int, data: dict[str, Any]) -> dict[str, Any]:
@@ -152,11 +172,14 @@ def get_api_token() -> str:
         )
 
     response = requests.post(
-        f"{QURAN_API_BASE_URL.removesuffix('/content/api/v4')}/oauth/token",
+        f"{get_auth_base_url(QURAN_API_BASE_URL)}/oauth2/token",
+        auth=(client_id, client_secret),
         data={
-            "client_id": client_id,
-            "client_secret": client_secret,
             "grant_type": "client_credentials",
+            "scope": os.environ.get(
+                "QURAN_API_CONTENT_SCOPE",
+                "content.quran.read",
+            ),
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=30,
