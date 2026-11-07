@@ -3,6 +3,28 @@
 // API Configuration
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8011';
 
+export type StudyNote = {
+  id: string;
+  title: string;
+  content: string;
+  surah_number: number | null;
+  ayah_number: number | null;
+  source_label: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type StudioArtifactRequest = {
+  kind: 'audio' | 'report' | 'slides' | 'video' | 'flashcards' | 'quiz' | 'infographic' | 'comparison';
+  surah_number: number;
+  ayah_number: number;
+  surah_name: string;
+  arabic_text: string;
+  translation: string;
+  tafsir_book_id: string | null;
+  selected_sources: string[];
+};
+
 // API Client - Client-side fetch wrapper
 export class ApiClient {
   private baseUrl: string;
@@ -55,6 +77,44 @@ export class ApiClient {
     return this.request<T>(endpoint, {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+  }
+
+  async getNotes(): Promise<{ success: boolean; data: StudyNote[] }> {
+    return this.request('/workspace/notes');
+  }
+
+  async createNote(note: Omit<StudyNote, 'id' | 'created_at' | 'updated_at'>): Promise<{ success: boolean; data: StudyNote }> {
+    return this.request('/workspace/notes', {
+      method: 'POST',
+      body: JSON.stringify(note),
+    });
+  }
+
+  async updateNote(noteId: string, update: { title?: string; content?: string }): Promise<{ success: boolean; data: StudyNote }> {
+    return this.request(`/workspace/notes/${encodeURIComponent(noteId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(update),
+    });
+  }
+
+  async deleteNote(noteId: string): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/api/v1/workspace/notes/${encodeURIComponent(noteId)}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      const errorBody: unknown = await response.json();
+      const detail = typeof errorBody === 'object' && errorBody !== null && 'error' in errorBody
+        && typeof errorBody.error === 'string' ? errorBody.error : 'ลบโน้ตไม่สำเร็จ';
+      throw new Error(detail);
+    }
+  }
+
+  async createStudioArtifact(request: StudioArtifactRequest): Promise<{ success: boolean; data: Record<string, unknown> }> {
+    return this.request('/workspace/artifacts', {
+      method: 'POST',
+      body: JSON.stringify(request),
     });
   }
 

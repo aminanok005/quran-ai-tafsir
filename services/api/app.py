@@ -21,7 +21,7 @@ import logging
 from datetime import datetime
 
 from .models import *
-from .routers import quran, agents, retrieval, tafsir
+from .routers import quran, agents, retrieval, tafsir, workspace
 from .services import QuranAPIService, AgentOrchestratorService, EvidenceValidationService
 from .config import settings
 
@@ -71,7 +71,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -80,6 +80,7 @@ app.include_router(quran.router, prefix="/api/v1")
 app.include_router(agents.router)
 app.include_router(tafsir.router, prefix="/api/v1")
 app.include_router(retrieval.router, prefix="/api/v1")
+app.include_router(workspace.router, prefix="/api/v1")
 
 @app.get("/health", tags=["health"])
 async def health() -> Dict[str, str]:
