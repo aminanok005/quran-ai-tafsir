@@ -37,7 +37,7 @@ async def _approved_source_passages(
 ) -> List[Dict[str, Any]]:
     """Fetch current API sources and admit only sources approved for AI use."""
     engine = get_engine()
-    approved_resources: list[tuple[int, Dict[str, Any]]] = []
+    approved_resources: list[tuple[str, int, Dict[str, Any]]] = []
     seen_resources: set[int] = set()
 
     for agent_type in agent_types:
