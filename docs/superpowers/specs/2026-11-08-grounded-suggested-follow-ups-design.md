@@ -71,8 +71,12 @@ own suggestions. One selected prompt is sent as ordinary user text. Multiple
 prompts are sent as a single numbered user message, with an explicit instruction
 to answer in separate headings and retain citations for each section. On
 successful submission, clear that answer's selection and fetch suggestions for
-the new assistant message. Loading uses four skeleton cards; empty and error
-responses hide the section without changing the answer.
+the new assistant message. For a selected batch, send the numbered text as one
+user message and include its structured prompt list in the answer request; run
+each prompt independently against the same selected sources and return
+separately headed sections with their own validated citations. Loading uses four
+skeleton cards; empty and error responses hide the section without changing the
+answer.
 
 ## Alternatives considered
 
@@ -114,7 +118,8 @@ responses hide the section without changing the answer.
   isolation. Run `python -m compileall`.
 - Frontend: component/integration tests for loading, empty, hidden error,
   category/evidence labels, toggles, clearing, one/multiple prompt submission,
-  per-answer suggestion state, and response refresh after sending.
+  per-answer suggestion state, separately cited batch sections, and response
+  refresh after sending.
 - Run the existing web typecheck and build, plus focused web tests.
 - Validate the toolbar review follow-up: clicking “ถาม AI” must open the
   explanation form with the selected ayah context.
