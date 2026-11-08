@@ -157,7 +157,7 @@ def store_message_snapshot(
         "message_id": message,
         "session_id": session,
         "browser_id": browser,
-        "question": question.strip(),
+        "question": question,
         "surah_number": surah,
         "ayah_number": ayah,
         "selected_agent_ids": agents,

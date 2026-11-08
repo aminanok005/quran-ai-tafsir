@@ -8,12 +8,18 @@ Provides access to 6 specialized Tafsir agents with evidence validation.
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import ValidationError
+from sqlalchemy.exc import SQLAlchemyError
 
 from ..config import settings
 from ..services import AgentOrchestratorService, EvidenceValidationService
+from ..services.chat_message_store import store_message_snapshot
+from ..services.embedding import EmbeddingConfigurationError, EmbeddingProviderError
 from ..services.quran_foundation_tafsir import QuranFoundationTafsirError
+from ..services.retrieval_scoring import qualifying_sources, score_retrieved_sources
 from .tafsir import (
     _api_source_url,
     _get_api_source_permission,
@@ -21,6 +27,7 @@ from .tafsir import (
     get_engine,
     get_qf_tafsir_client,
 )
+from .workspace import current_browser_id
 
 router = APIRouter(tags=["Agents"])
 logger = logging.getLogger(__name__)
@@ -126,7 +133,9 @@ async def get_agent_explanation(
     ayah_id: str,
     agent_types: List[str],
     context: Optional[Dict[str, Any]] = None,
-    validate_output: bool = True
+    validate_output: bool = True,
+    session_id: UUID | None = None,
+    browser_id: UUID = Depends(current_browser_id),
 ):
     """Get Tafsir explanation from specified agents for a specific ayah."""
 
@@ -181,9 +190,56 @@ async def get_agent_explanation(
             )
             agent_outputs["validation"] = validation_results
 
+        follow_up_metadata: dict[str, Any] = {
+            "session_id": str(session_id) if session_id else None,
+            "message_id": None,
+            "followups_available": False,
+        }
+        question = agent_context.get("question")
+        if session_id is not None and isinstance(question, str) and question.strip():
+            try:
+                scored_sources = await score_retrieved_sources(
+                    question,
+                    source_passages,
+                )
+                message_id = uuid4()
+                selected_source_ids = [
+                    source["passage_id"] for source in source_passages
+                ]
+                selected_agent_ids = list(dict.fromkeys(
+                    source["scholar_id"] for source in source_passages
+                ))
+                store_message_snapshot(
+                    get_engine(),
+                    browser_id=browser_id,
+                    session_id=session_id,
+                    message_id=message_id,
+                    question=question,
+                    surah=surah,
+                    ayah=ayah,
+                    selected_agent_ids=selected_agent_ids,
+                    selected_source_ids=selected_source_ids,
+                    source_snapshots=scored_sources,
+                )
+                follow_up_metadata.update({
+                    "message_id": str(message_id),
+                    "followups_available": bool(qualifying_sources(scored_sources)),
+                })
+            except (
+                EmbeddingConfigurationError,
+                EmbeddingProviderError,
+                SQLAlchemyError,
+                ValidationError,
+                ValueError,
+            ) as error:
+                logger.warning(
+                    "Grounded answer follow-ups unavailable (%s)",
+                    type(error).__name__,
+                )
+
         return {
             "success": True,
-            "data": agent_outputs,
+            "data": {**agent_outputs, **follow_up_metadata},
             "timestamp": datetime.now().isoformat()
         }
 

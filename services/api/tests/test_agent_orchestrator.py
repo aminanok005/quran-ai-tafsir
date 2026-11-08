@@ -2,16 +2,19 @@ import asyncio
 import os
 import unittest
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 os.environ.setdefault("DATABASE_URL", "postgresql+psycopg://postgres@localhost/quran_ai_test")
 
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import SQLAlchemyError
 
 from services.api.app import app
 from services.api.routers import agents as agents_router
 from services.api.services.agent_orchestrator import AgentOrchestratorService
 from services.api.services.evidence_validator import EvidenceValidationService
 from services.api.services.quran_foundation_tafsir import QuranFoundationTafsir
+from services.api.services.embedding import EmbeddingProviderError
 
 TRUSTED_PASSAGE = {
     "passage_id": "passage-1",
@@ -382,6 +385,221 @@ class AgentOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output["evidence_level"], "SOURCE-ATTRIBUTED")
         self.assertEqual(output["citations"][0]["evidence_status"], "VERIFIED")
         self.assertTrue(response.json()["data"]["validation"]["overall_valid"])
+
+    def test_versioned_agent_route_persists_question_and_relevance_threshold(self):
+        source = {
+            "passage_id": "qf:168:1:1",
+            "resource_id": 168,
+            "verse_key": "1:1",
+            "arabic_text": "Approved exact source passage",
+            "scholar_id": "ibn_kathir",
+            "scholar_name": "Tafsir Ibn Kathir",
+            "volume": None,
+            "page": None,
+            "source_kind": "tafsir",
+        }
+        agent_result = {
+            "ayah_id": "1:1",
+            "agents_executed": ["ibn_kathir"],
+            "agent_outputs": {"ibn_kathir": {"explanation": "Grounded"}},
+            "evidence_summary": {
+                "total_sources": 1,
+                "verified_sources": 1,
+                "unverified_sources": 0,
+                "ai_synthesis": 0,
+            },
+        }
+
+        for score, expected_available in ((0.719, False), (0.72, True)):
+            with self.subTest(score=score):
+                browser_id, session_id = uuid4(), uuid4()
+                scored_source = {
+                    "source_id": "qf:168:1:1",
+                    "resource_id": 168,
+                    "verse_key": "1:1",
+                    "similarity": score,
+                    "content_hash": "a" * 64,
+                    "scholar_id": "ibn_kathir",
+                    "scholar_name": "Tafsir Ibn Kathir",
+                    "volume": None,
+                    "page": None,
+                    "source_kind": "tafsir",
+                }
+                app.dependency_overrides[agents_router.current_browser_id] = (
+                    lambda: browser_id
+                )
+                try:
+                    with (
+                        patch.object(
+                            agents_router,
+                            "_approved_source_passages",
+                            new_callable=AsyncMock,
+                            return_value=[source],
+                        ),
+                        patch.object(
+                            agents_router.agent_orchestrator,
+                            "execute_agent_analysis",
+                            new_callable=AsyncMock,
+                            return_value=agent_result,
+                        ),
+                        patch.object(
+                            agents_router.evidence_validator,
+                            "bulk_validate_agent_outputs",
+                            return_value={
+                                "overall_valid": True,
+                                "agent_validations": {},
+                            },
+                        ),
+                        patch.object(
+                            agents_router,
+                            "score_retrieved_sources",
+                            new_callable=AsyncMock,
+                            return_value=[scored_source],
+                        ) as score_sources,
+                        patch.object(agents_router, "get_engine", return_value=object()),
+                        patch.object(agents_router, "store_message_snapshot") as store_snapshot,
+                        TestClient(app) as client,
+                    ):
+                        response = client.post(
+                            "/api/v1/tafsir/agents/explain",
+                            params={
+                                "ayah_id": "1:1",
+                                "session_id": str(session_id),
+                            },
+                            json={
+                                "agent_types": ["ibn_kathir"],
+                                "context": {
+                                    "question": "  Explain this selected ayah  ",
+                                    "language": "th",
+                                },
+                            },
+                        )
+                finally:
+                    app.dependency_overrides.pop(
+                        agents_router.current_browser_id,
+                        None,
+                    )
+
+                self.assertEqual(response.status_code, 200, response.json())
+                data = response.json()["data"]
+                self.assertEqual(data["session_id"], str(session_id))
+                self.assertTrue(data["message_id"])
+                self.assertEqual(data["followups_available"], expected_available)
+                score_sources.assert_awaited_once_with(
+                    "  Explain this selected ayah  ",
+                    [source],
+                )
+                store_snapshot.assert_called_once()
+                self.assertEqual(
+                    store_snapshot.call_args.kwargs["question"],
+                    "  Explain this selected ayah  ",
+                )
+                self.assertEqual(store_snapshot.call_args.kwargs["selected_agent_ids"], ["ibn_kathir"])
+                self.assertEqual(
+                    store_snapshot.call_args.kwargs["source_snapshots"],
+                    [scored_source],
+                )
+
+    def test_versioned_agent_route_keeps_answer_on_scoring_and_persistence_failures(self):
+        source = {
+            "passage_id": "qf:168:1:1",
+            "resource_id": 168,
+            "verse_key": "1:1",
+            "arabic_text": "Approved exact source passage",
+            "scholar_id": "ibn_kathir",
+            "scholar_name": "Tafsir Ibn Kathir",
+            "volume": None,
+            "page": None,
+            "source_kind": "tafsir",
+        }
+        agent_result = {
+            "ayah_id": "1:1",
+            "agents_executed": ["ibn_kathir"],
+            "agent_outputs": {"ibn_kathir": {"explanation": "Grounded"}},
+            "evidence_summary": {
+                "total_sources": 1,
+                "verified_sources": 1,
+                "unverified_sources": 0,
+                "ai_synthesis": 0,
+            },
+        }
+
+        for scoring_fails in (True, False):
+            with self.subTest(scoring_fails=scoring_fails):
+                browser_id = uuid4()
+                app.dependency_overrides[agents_router.current_browser_id] = lambda: browser_id
+                score_snapshot = {
+                    "source_id": "qf:168:1:1",
+                    "resource_id": 168,
+                    "verse_key": "1:1",
+                    "similarity": 0.9,
+                    "content_hash": "a" * 64,
+                    "scholar_id": "ibn_kathir",
+                    "scholar_name": "Tafsir Ibn Kathir",
+                    "volume": None,
+                    "page": None,
+                    "source_kind": "tafsir",
+                }
+                try:
+                    with (
+                        patch.object(
+                            agents_router,
+                            "_approved_source_passages",
+                            new_callable=AsyncMock,
+                            return_value=[source],
+                        ),
+                        patch.object(
+                            agents_router.agent_orchestrator,
+                            "execute_agent_analysis",
+                            new_callable=AsyncMock,
+                            return_value=agent_result,
+                        ),
+                        patch.object(
+                            agents_router.evidence_validator,
+                            "bulk_validate_agent_outputs",
+                            return_value={
+                                "overall_valid": True,
+                                "agent_validations": {},
+                            },
+                        ),
+                        patch.object(
+                            agents_router,
+                            "score_retrieved_sources",
+                            new_callable=AsyncMock,
+                            side_effect=(
+                                EmbeddingProviderError("embedding unavailable")
+                                if scoring_fails
+                                else None
+                            ),
+                            return_value=[] if scoring_fails else [score_snapshot],
+                        ),
+                        patch.object(agents_router, "get_engine", return_value=object()),
+                        patch.object(
+                            agents_router,
+                            "store_message_snapshot",
+                            side_effect=SQLAlchemyError("database unavailable")
+                            if not scoring_fails
+                            else None,
+                        ),
+                        TestClient(app) as client,
+                    ):
+                        response = client.post(
+                            "/api/v1/tafsir/agents/explain",
+                            params={"ayah_id": "1:1", "session_id": str(uuid4())},
+                            json={
+                                "agent_types": ["ibn_kathir"],
+                                "context": {"question": "Explain this"},
+                            },
+                        )
+                finally:
+                    app.dependency_overrides.pop(
+                        agents_router.current_browser_id,
+                        None,
+                    )
+
+                self.assertEqual(response.status_code, 200, response.json())
+                self.assertFalse(response.json()["data"]["followups_available"])
+                self.assertIsNone(response.json()["data"]["message_id"])
 
 
 class AgentRouteTests(unittest.TestCase):
