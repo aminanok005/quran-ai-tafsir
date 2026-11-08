@@ -47,7 +47,7 @@ async def _approved_source_passages(
         seen_resources.add(resource_id)
         permission = _get_api_source_permission(engine, resource_id)
         if _translation_is_allowed(permission) and permission is not None:
-            approved_resources.append((resource_id, permission))
+            approved_resources.append((agent_type, resource_id, permission))
 
     if not approved_resources:
         return []
@@ -55,7 +55,7 @@ async def _approved_source_passages(
     source_passages = []
     try:
         client = get_qf_tafsir_client()
-        for resource_id, permission in approved_resources:
+        for agent_type, resource_id, permission in approved_resources:
             passage = await client.fetch_ayah(resource_id, surah, ayah)
             source_passages.append({
                 "passage_id": f"qf:{passage.resource_id}:{passage.verse_key}",

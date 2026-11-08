@@ -102,13 +102,8 @@ async def score_retrieved_sources(
 
 def qualifying_sources(
     sources: Sequence[Mapping[str, Any]],
-    *,
-    threshold: float = RELEVANCE_THRESHOLD,
 ) -> list[Mapping[str, Any]]:
     """Keep only sources with a valid score at or above the relevance threshold."""
-    if not math.isfinite(threshold) or not -1 <= threshold <= 1:
-        raise ValueError("threshold must be a finite cosine score")
-
     qualifying: list[Mapping[str, Any]] = []
     for source in sources:
         score = source.get("similarity")
@@ -119,7 +114,7 @@ def qualifying_sources(
             or not -1 <= score <= 1
         ):
             raise ValueError("retrieved source has an invalid similarity score")
-        if score >= threshold:
+        if score >= RELEVANCE_THRESHOLD:
             qualifying.append(source)
     return qualifying
 

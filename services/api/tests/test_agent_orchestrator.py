@@ -47,7 +47,7 @@ class AgentStub:
 
 
 class AgentOrchestratorTests(unittest.IsolatedAsyncioTestCase):
-    async def test_agent_sources_are_fetched_from_qf_after_permission_approval(self):
+    async def test_agent_sources_keep_their_selected_scholar_identity(self):
         class FakeQfClient:
             content_api_url = "https://apis-prelive.quran.foundation/content/api/v4"
 
@@ -57,10 +57,10 @@ class AgentOrchestratorTests(unittest.IsolatedAsyncioTestCase):
             async def fetch_ayah(self, resource_id, surah, ayah):
                 self.calls.append((resource_id, surah, ayah))
                 return QuranFoundationTafsir(
-                    resource_id=168,
-                    resource_name="Tafsir Ibn Kathir",
+                    resource_id=resource_id,
+                    resource_name=f"Tafsir source {resource_id}",
                     language_name="english",
-                    slug="en-tafisr-ibn-kathir",
+                    slug=f"source-{resource_id}",
                     verse_key="1:1",
                     text="Live Quran Foundation passage",
                 )
@@ -77,7 +77,7 @@ class AgentOrchestratorTests(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 agents_router.settings,
                 "quran_tafsir_resource_map",
-                {"ibn_kathir": 168},
+                {"ibn_kathir": 168, "al_tabari": 170},
             ),
             patch.object(agents_router, "get_engine", return_value=object()),
             patch.object(
@@ -91,16 +91,21 @@ class AgentOrchestratorTests(unittest.IsolatedAsyncioTestCase):
                 return_value=qf_client,
             ),
         ):
-            sources = await agents_router._approved_source_passages(1, 1, ["ibn_kathir"])
+            sources = await agents_router._approved_source_passages(
+                1, 1, ["ibn_kathir", "al_tabari"]
+            )
 
-        self.assertEqual(qf_client.calls, [(168, 1, 1)])
-        self.assertEqual(len(sources), 1)
+        self.assertEqual(qf_client.calls, [(168, 1, 1), (170, 1, 1)])
+        self.assertEqual(len(sources), 2)
         self.assertEqual(sources[0]["passage_id"], "qf:168:1:1")
+        self.assertEqual(sources[0]["scholar_id"], "ibn_kathir")
         self.assertEqual(sources[0]["arabic_text"], "Live Quran Foundation passage")
         self.assertEqual(sources[0]["resource_id"], 168)
         self.assertEqual(sources[0]["verse_key"], "1:1")
-        self.assertEqual(sources[0]["scholar_id"], "ibn_kathir")
         self.assertEqual(sources[0]["source_kind"], "tafsir")
+        self.assertEqual(sources[1]["passage_id"], "qf:170:1:1")
+        self.assertEqual(sources[1]["scholar_id"], "al_tabari")
+        self.assertEqual(sources[1]["resource_id"], 170)
         self.assertEqual(
             sources[0]["source_reference"],
             "https://apis-prelive.quran.foundation/content/api/v4/tafsirs/168/by_ayah/1:1",
