@@ -28,6 +28,8 @@ from sqlalchemy.dialects.postgresql import JSONB, insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
 
+from .quran_metadata import is_valid_ayah
+
 
 metadata = MetaData()
 _json_type = JSON().with_variant(JSONB(), "postgresql")
@@ -136,7 +138,7 @@ def store_message_snapshot(
     message = _uuid(message_id, "message_id")
     if not question.strip():
         raise ValueError("question must not be empty")
-    if not 1 <= surah <= 114 or not 1 <= ayah <= 286:
+    if not is_valid_ayah(surah, ayah):
         raise ValueError("ayah location is out of range")
 
     agents = _validate_ids(selected_agent_ids, "selected_agent_ids")

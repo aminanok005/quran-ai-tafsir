@@ -84,6 +84,25 @@ def test_message_snapshot_cannot_be_loaded_by_another_browser():
     ) is None
 
 
+def test_message_snapshot_rejects_nonexistent_ayah_for_surah():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    metadata.create_all(engine)
+
+    with pytest.raises(ValueError, match="ayah location is out of range"):
+        store_message_snapshot(
+            engine,
+            browser_id=uuid4(),
+            session_id=uuid4(),
+            message_id=uuid4(),
+            question="A question",
+            surah=1,
+            ayah=8,
+            selected_agent_ids=["ibn_kathir"],
+            selected_source_ids=[],
+            source_snapshots=[],
+        )
+
+
 def test_message_snapshot_rejects_source_text_fields():
     engine = create_engine("sqlite+pysqlite:///:memory:")
     metadata.create_all(engine)
@@ -186,6 +205,13 @@ def test_migration_has_browser_scoped_snapshot_tables_and_expected_revision():
     }
     assert {"chat_sessions", "chat_message_retrievals"} <= table_calls.keys()
 
+    session_columns = {
+        column.name
+        for column in table_calls["chat_sessions"]
+        if hasattr(column, "name")
+    }
+    assert {"id", "browser_id"} <= session_columns
+
     message_columns = {
         column.name
         for column in table_calls["chat_message_retrievals"]
@@ -204,4 +230,7 @@ def test_migration_has_browser_scoped_snapshot_tables_and_expected_revision():
     created_index_names = {
         call.args[0] for call in operations.create_index.call_args_list
     }
-    assert "idx_chat_message_retrievals_browser_session" in created_index_names
+    assert {
+        "idx_chat_sessions_browser",
+        "idx_chat_message_retrievals_browser_session",
+    } <= created_index_names
