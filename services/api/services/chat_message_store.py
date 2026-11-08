@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import (
     JSON,
     CheckConstraint,
@@ -195,6 +195,23 @@ def get_message_snapshot(
     if row is None:
         return None
 
+    try:
+        selected_agent_ids = _validate_ids(row["selected_agent_ids"], "selected_agent_ids")
+        selected_source_ids = _validate_ids(row["selected_source_ids"], "selected_source_ids")
+        raw_sources = row["source_snapshots"]
+        if not isinstance(raw_sources, list):
+            raise ValueError("source_snapshots must be a list")
+        sources = [
+            SourceSnapshot.model_validate(item).model_dump(mode="json")
+            for item in raw_sources
+        ]
+        if len({item["source_id"] for item in sources}) != len(sources):
+            raise ValueError("source_snapshots must not contain duplicate source IDs")
+        if any(item["source_id"] not in selected_source_ids for item in sources):
+            raise ValueError("source_snapshots must be limited to selected source IDs")
+    except (ValidationError, TypeError, ValueError):
+        raise RuntimeError("Stored source snapshot is invalid") from None
+
     return {
         "message_id": str(row["message_id"]),
         "session_id": str(row["session_id"]),
@@ -202,9 +219,9 @@ def get_message_snapshot(
         "question": row["question"],
         "surah_number": row["surah_number"],
         "ayah_number": row["ayah_number"],
-        "selected_agent_ids": row["selected_agent_ids"],
-        "selected_source_ids": row["selected_source_ids"],
-        "sources": row["source_snapshots"],
+        "selected_agent_ids": selected_agent_ids,
+        "selected_source_ids": selected_source_ids,
+        "sources": sources,
     }
 
 

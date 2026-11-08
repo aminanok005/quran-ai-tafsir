@@ -5,9 +5,10 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, update
 
 from services.api.services.chat_message_store import (
+    chat_message_retrievals,
     metadata,
     get_message_snapshot,
     store_message_snapshot,
@@ -111,6 +112,61 @@ def test_message_snapshot_rejects_source_text_fields():
                 "source_kind": "tafsir",
                 "source_text": "must not be persisted",
             }],
+        )
+
+
+def test_message_snapshot_read_rejects_persisted_source_text():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    metadata.create_all(engine)
+    browser_id, session_id, message_id = uuid4(), uuid4(), uuid4()
+    store_message_snapshot(
+        engine,
+        browser_id=browser_id,
+        session_id=session_id,
+        message_id=message_id,
+        question="A question",
+        surah=1,
+        ayah=1,
+        selected_agent_ids=["ibn_kathir"],
+        selected_source_ids=["qf:168:1:1"],
+        source_snapshots=[{
+            "source_id": "qf:168:1:1",
+            "resource_id": 168,
+            "verse_key": "1:1",
+            "similarity": 0.82,
+            "content_hash": "a" * 64,
+            "scholar_id": "ibn_kathir",
+            "scholar_name": "Tafsir Ibn Kathir",
+            "volume": None,
+            "page": None,
+            "source_kind": "tafsir",
+        }],
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            update(chat_message_retrievals)
+            .where(chat_message_retrievals.c.message_id == message_id)
+            .values(source_snapshots=[{
+                "source_id": "qf:168:1:1",
+                "resource_id": 168,
+                "verse_key": "1:1",
+                "similarity": 0.82,
+                "content_hash": "a" * 64,
+                "scholar_id": "ibn_kathir",
+                "scholar_name": "Tafsir Ibn Kathir",
+                "volume": None,
+                "page": None,
+                "source_kind": "tafsir",
+                "source_text": "must not be returned",
+            }]),
+        )
+
+    with pytest.raises(RuntimeError, match="Stored source snapshot is invalid"):
+        get_message_snapshot(
+            engine,
+            browser_id=browser_id,
+            session_id=session_id,
+            message_id=message_id,
         )
 
 
