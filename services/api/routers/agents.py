@@ -97,20 +97,47 @@ async def _approved_source_passages(
 
 def _validated_agent_context(context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     context = context or {}
-    unknown_fields = set(context) - {"question", "language"}
+    unknown_fields = set(context) - {"question", "language", "subquestions"}
     if unknown_fields:
         raise HTTPException(
             status_code=422,
-            detail="Agent context only accepts question and language fields",
+            detail="Agent context contains unsupported fields",
         )
     question = context.get("question")
     if question is not None and (
-        not isinstance(question, str) or len(question) > 2000
+        not isinstance(question, str) or len(question) > 2050
     ):
-        raise HTTPException(status_code=422, detail="Question must be text of at most 2000 characters")
+        raise HTTPException(status_code=422, detail="Question must be text of at most 2050 characters")
     language = context.get("language")
     if language is not None and language not in {"ar", "en", "th"}:
         raise HTTPException(status_code=422, detail="Language must be one of: ar, en, th")
+
+    subquestions = context.get("subquestions")
+    if subquestions is not None:
+        if (
+            not isinstance(subquestions, list)
+            or not 2 <= len(subquestions) <= 4
+            or any(
+                not isinstance(item, str) or not item.strip() or len(item) > 500
+                for item in subquestions
+            )
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="A batch must contain 2 to 4 non-empty prompts of at most 500 characters",
+            )
+        if len(set(subquestions)) != len(subquestions):
+            raise HTTPException(status_code=422, detail="Batch prompts must be unique")
+        expected_question = "\n".join(
+            f"{index}. {item}" for index, item in enumerate(subquestions, start=1)
+        )
+        if question != expected_question:
+            raise HTTPException(
+                status_code=422,
+                detail="Question text must match the numbered batch prompts",
+            )
+    elif isinstance(question, str) and len(question) > 2000:
+        raise HTTPException(status_code=422, detail="Question must be at most 2000 characters")
     return context
 
 
@@ -170,25 +197,69 @@ async def get_agent_explanation(
             )
 
         agent_context = _validated_agent_context(context)
-        agent_outputs = await agent_orchestrator.execute_agent_analysis(
-            surah,
-            ayah,
-            agent_types,
-            agent_context,
-            source_passages=source_passages,
-        )
-        if not agent_outputs["agents_executed"]:
-            raise HTTPException(
-                status_code=503,
-                detail="Agents could not produce output grounded in approved source passages",
+        subquestions = agent_context.get("subquestions")
+        if subquestions is None:
+            answer_data = await agent_orchestrator.execute_agent_analysis(
+                surah,
+                ayah,
+                agent_types,
+                agent_context,
+                source_passages=source_passages,
             )
+            if not answer_data["agents_executed"]:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Agents could not produce output grounded in approved source passages",
+                )
+            if validate_output:
+                answer_data["validation"] = evidence_validator.bulk_validate_agent_outputs(
+                    answer_data["agent_outputs"]
+                )
+        else:
+            sections = await agent_orchestrator.execute_agent_analysis_for_questions(
+                surah,
+                ayah,
+                agent_types,
+                subquestions,
+                agent_context,
+                source_passages=source_passages,
+            )
+            if not any(section["agents_executed"] for section in sections):
+                raise HTTPException(
+                    status_code=503,
+                    detail="Agents could not produce output grounded in approved source passages",
+                )
+            if validate_output:
+                for section in sections:
+                    section["validation"] = evidence_validator.bulk_validate_agent_outputs(
+                        section["agent_outputs"]
+                    )
 
-        # Validate outputs if requested
-        if validate_output:
-            validation_results = evidence_validator.bulk_validate_agent_outputs(
-                agent_outputs["agent_outputs"]
-            )
-            agent_outputs["validation"] = validation_results
+            summaries = [section.get("evidence_summary", {}) for section in sections]
+            answer_data = {
+                "ayah_id": f"{surah}:{ayah}",
+                "agents_executed": list(dict.fromkeys(
+                    agent_type
+                    for section in sections
+                    for agent_type in section["agents_executed"]
+                )),
+                "agent_outputs": {},
+                "sections": sections,
+                "comparative_analysis": None,
+                "evidence_summary": {
+                    key: sum(summary.get(key, 0) for summary in summaries)
+                    for key in (
+                        "total_sources",
+                        "verified_sources",
+                        "unverified_sources",
+                        "ai_synthesis",
+                    )
+                },
+                "processing_time": sum(
+                    section.get("processing_time", 0) for section in sections
+                ),
+                "created_at": datetime.now().isoformat(),
+            }
 
         follow_up_metadata: dict[str, Any] = {
             "session_id": str(session_id) if session_id else None,
@@ -239,7 +310,7 @@ async def get_agent_explanation(
 
         return {
             "success": True,
-            "data": {**agent_outputs, **follow_up_metadata},
+            "data": {**answer_data, **follow_up_metadata},
             "timestamp": datetime.now().isoformat()
         }
 

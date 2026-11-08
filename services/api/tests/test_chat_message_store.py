@@ -37,7 +37,7 @@ def test_message_snapshot_is_stored_without_passage_text():
         browser_id=browser_id,
         session_id=session_id,
         message_id=message_id,
-        question="What context should I study?",
+        question="  What context should I study?  ",
         surah=1,
         ayah=1,
         selected_agent_ids=["ibn_kathir"],
@@ -53,6 +53,7 @@ def test_message_snapshot_is_stored_without_passage_text():
 
     assert saved is not None
     assert saved["message_id"] == str(message_id)
+    assert saved["question"] == "  What context should I study?  "
     assert saved["selected_agent_ids"] == ["ibn_kathir"]
     assert saved["sources"] == [source]
     assert "text" not in saved["sources"][0]

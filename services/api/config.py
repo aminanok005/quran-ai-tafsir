@@ -79,6 +79,102 @@ class Settings(BaseSettings):
     llm_max_tokens: int = Field(default=4000, validation_alias="LLM_MAX_TOKENS")
     llm_temperature: float = Field(default=0.1, ge=0.0, le=2.0, validation_alias="LLM_TEMPERATURE")
 
+    # Text-to-speech settings are deliberately independent from LLM credentials and models.
+    tts_enabled: bool = Field(default=False, validation_alias="TTS_ENABLED")
+    tts_api_key: Optional[str] = Field(default=None, validation_alias="TTS_API_KEY")
+    tts_model: Optional[str] = Field(default=None, validation_alias="TTS_MODEL")
+    tts_api_base_url: Optional[str] = Field(default=None, validation_alias="TTS_API_BASE_URL")
+    tts_allowed_editions: Annotated[List[str], NoDecode] = Field(
+        default_factory=list,
+        validation_alias="TTS_ALLOWED_EDITIONS",
+    )
+    tts_voice_map: Dict[str, str] = Field(default_factory=dict, validation_alias="TTS_VOICE_MAP")
+    tts_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        le=120,
+        validation_alias="TTS_TIMEOUT_SECONDS",
+    )
+    tts_max_text_chars: int = Field(
+        default=5000,
+        ge=1,
+        le=100000,
+        validation_alias="TTS_MAX_TEXT_CHARS",
+    )
+    tts_max_audio_bytes: int = Field(
+        default=10000000,
+        ge=1,
+        le=100000000,
+        validation_alias="TTS_MAX_AUDIO_BYTES",
+    )
+    tts_max_source_bytes: int = Field(
+        default=2000000,
+        ge=1,
+        le=100000000,
+        validation_alias="TTS_MAX_SOURCE_BYTES",
+    )
+    tts_cache_max_bytes: int = Field(
+        default=50000000,
+        ge=1,
+        le=1000000000,
+        validation_alias="TTS_CACHE_MAX_BYTES",
+    )
+    tts_cache_ttl_seconds: int = Field(
+        default=300,
+        ge=1,
+        le=86400,
+        validation_alias="TTS_CACHE_TTL_SECONDS",
+    )
+    tts_rate_limit_per_minute: int = Field(
+        default=30,
+        ge=1,
+        le=1000,
+        validation_alias="TTS_RATE_LIMIT_PER_MINUTE",
+    )
+
+    @field_validator("tts_api_base_url")
+    @classmethod
+    def validate_tts_api_base_url(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+
+        try:
+            parsed_url = urlsplit(value)
+            host = parsed_url.hostname
+            _ = parsed_url.port
+        except ValueError as error:
+            raise ValueError(
+                "TTS API base URL must be a valid HTTPS URL or loopback HTTP URL"
+            ) from error
+
+        if not host or parsed_url.scheme.lower() not in {"https", "http"}:
+            raise ValueError("TTS API base URL must be a valid HTTPS URL or loopback HTTP URL")
+        if parsed_url.scheme.lower() == "http" and host not in {"localhost", "127.0.0.1", "::1"}:
+            raise ValueError("TTS API base URL must use HTTPS except for recognized loopback hosts")
+        return value
+
+    @field_validator("tts_allowed_editions")
+    @classmethod
+    def validate_tts_allowed_editions(cls, value: List[str]) -> List[str]:
+        supported_editions = {"th.thai", "en.sahih", "id.indonesian"}
+        unknown_editions = set(value) - supported_editions
+        if unknown_editions:
+            raise ValueError(f"Unsupported TTS editions: {', '.join(sorted(unknown_editions))}")
+        return value
+
+    @field_validator("tts_voice_map")
+    @classmethod
+    def validate_tts_voice_map(cls, value: Dict[str, str]) -> Dict[str, str]:
+        supported_languages = {"th", "en", "id"}
+        unknown_languages = set(value) - supported_languages
+        if unknown_languages:
+            raise ValueError(
+                f"Unsupported TTS voice languages: {', '.join(sorted(unknown_languages))}"
+            )
+        if any(not voice.strip() for voice in value.values()):
+            raise ValueError("TTS voice names must not be empty")
+        return value
+
     @property
     def translation_api_key(self) -> Optional[str]:
         if self.llm_api_key:
@@ -144,7 +240,7 @@ class Settings(BaseSettings):
         validation_alias="APP_SUPPORTED_LOCALES",
     )
 
-    @field_validator("cors_origins", "supported_languages", mode="before")
+    @field_validator("cors_origins", "supported_languages", "tts_allowed_editions", mode="before")
     @classmethod
     def parse_string_lists(cls, value: Any) -> Any:
         if not isinstance(value, str):

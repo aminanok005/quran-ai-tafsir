@@ -160,6 +160,36 @@ class AgentOrchestratorService:
             "created_at": datetime.now().isoformat()
         }
 
+    async def execute_agent_analysis_for_questions(
+        self,
+        surah: int,
+        ayah: int,
+        agent_types: List[str],
+        questions: List[str],
+        context: Optional[Dict[str, Any]] = None,
+        *,
+        source_passages: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Run each submitted prompt independently against the same approved sources."""
+        if not 2 <= len(questions) <= 4:
+            raise ValueError("A batch must contain between 2 and 4 questions")
+        if any(not isinstance(question, str) or not question.strip() for question in questions):
+            raise ValueError("Batch questions must be non-empty text")
+
+        base_context = dict(context or {})
+        base_context.pop("subquestions", None)
+        sections = []
+        for question in questions:
+            section = await self.execute_agent_analysis(
+                surah,
+                ayah,
+                agent_types,
+                {**base_context, "question": question},
+                source_passages=source_passages,
+            )
+            sections.append({"question": question, **section})
+        return sections
+
     @staticmethod
     def _trusted_passages(passages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return [

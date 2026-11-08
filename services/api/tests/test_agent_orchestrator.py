@@ -135,6 +135,31 @@ class AgentOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent.contexts[0]["source_passages"], [TRUSTED_PASSAGE])
         self.assertEqual(context, {"question": "study"})
 
+    async def test_batch_questions_keep_each_answer_and_citation_in_its_section(self):
+        agent = AgentStub()
+        orchestrator = AgentOrchestratorService({"scholar": agent})
+        questions = ["Compare the selected views", "Explain the source context"]
+
+        sections = await orchestrator.execute_agent_analysis_for_questions(
+            1,
+            1,
+            ["scholar"],
+            questions,
+            {"language": "th"},
+            source_passages=[TRUSTED_PASSAGE],
+        )
+
+        self.assertEqual([section["question"] for section in sections], questions)
+        self.assertEqual(len(sections), 2)
+        for section in sections:
+            output = section["agent_outputs"]["scholar"]
+            self.assertEqual(output["citations"][0]["passage_id"], "passage-1")
+            self.assertEqual(output["evidence_level"], "SOURCE-ATTRIBUTED")
+        self.assertEqual(
+            [context["question"] for context in agent.contexts],
+            questions,
+        )
+
     async def test_unapproved_or_unverified_passages_are_not_sent_to_agents(self):
         agent = AgentStub()
         orchestrator = AgentOrchestratorService({"scholar": agent})
@@ -385,6 +410,85 @@ class AgentOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(output["evidence_level"], "SOURCE-ATTRIBUTED")
         self.assertEqual(output["citations"][0]["evidence_status"], "VERIFIED")
         self.assertTrue(response.json()["data"]["validation"]["overall_valid"])
+
+    def test_versioned_agent_batch_route_returns_separate_validated_citations(self):
+        first = {
+            "question": "Compare the selected views",
+            "agents_executed": ["ibn_kathir"],
+            "agent_outputs": {
+                "ibn_kathir": {
+                    "explanation": "First answer",
+                    "citations": [{"passage_id": "source-1"}],
+                },
+            },
+            "evidence_summary": {"verified_sources": 1},
+        }
+        second = {
+            "question": "Explain the source context",
+            "agents_executed": ["ibn_kathir"],
+            "agent_outputs": {
+                "ibn_kathir": {
+                    "explanation": "Second answer",
+                    "citations": [{"passage_id": "source-2"}],
+                },
+            },
+            "evidence_summary": {"verified_sources": 1},
+        }
+        with (
+            patch.object(
+                agents_router,
+                "_approved_source_passages",
+                new_callable=AsyncMock,
+                return_value=[TRUSTED_PASSAGE],
+            ),
+            patch.object(
+                agents_router.agent_orchestrator,
+                "execute_agent_analysis_for_questions",
+                new_callable=AsyncMock,
+                create=True,
+                return_value=[first, second],
+            ) as execute_batch,
+            patch.object(
+                agents_router.evidence_validator,
+                "bulk_validate_agent_outputs",
+                side_effect=[
+                    {"overall_valid": True, "agent_validations": {"ibn_kathir": {"valid": True}}},
+                    {"overall_valid": True, "agent_validations": {"ibn_kathir": {"valid": True}}},
+                ],
+            ),
+            TestClient(app) as client,
+        ):
+            response = client.post(
+                "/api/v1/tafsir/agents/explain",
+                params={"ayah_id": "1:1"},
+                json={
+                    "agent_types": ["ibn_kathir"],
+                    "context": {
+                        "question": (
+                            "1. Compare the selected views\n"
+                            "2. Explain the source context"
+                        ),
+                        "language": "th",
+                        "subquestions": [
+                            "Compare the selected views",
+                            "Explain the source context",
+                        ],
+                    },
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.json())
+        sections = response.json()["data"]["sections"]
+        self.assertEqual(
+            [section["question"] for section in sections],
+            ["Compare the selected views", "Explain the source context"],
+        )
+        self.assertEqual(
+            [section["agent_outputs"]["ibn_kathir"]["citations"][0]["passage_id"] for section in sections],
+            ["source-1", "source-2"],
+        )
+        self.assertTrue(all(section["validation"]["overall_valid"] for section in sections))
+        execute_batch.assert_awaited_once()
 
     def test_versioned_agent_route_persists_question_and_relevance_threshold(self):
         source = {

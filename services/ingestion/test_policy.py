@@ -7,6 +7,7 @@ from policy import (
     PRODUCTION,
     REJECTED,
     SUSPENDED,
+    UNVERIFIED,
     VERIFIED,
     SourcePermission,
     development_import_metadata,
@@ -60,6 +61,34 @@ class IngestionPolicyTests(unittest.TestCase):
         self.assertEqual(metadata["permission_status"], DEVELOPMENT_ONLY)
         self.assertEqual(metadata["verification_status"], "unverified")
         self.assertEqual(metadata["import_mode"], DEVELOPMENT)
+
+    def test_approved_source_missing_multiple_metadata_fields_is_blocked(self):
+        base = dict(permission_status=APPROVED, verification_status=VERIFIED)
+        incomplete = dict(base, license=None, source_url=None, verification_evidence=None)
+        self.assertFalse(evaluate_source(SourcePermission("s1", "Example work", **incomplete)).allowed)
+
+    def test_approved_source_with_empty_license_is_blocked(self):
+        permission = SourcePermission(
+            "s1", "Example work", permission_status=APPROVED,
+            verification_status=VERIFIED, license="",
+            source_url="https://example.invalid/source", verification_evidence="review-1",
+        )
+        self.assertFalse(evaluate_source(permission).allowed)
+
+    def test_development_import_metadata_with_all_none_optionals(self):
+        permission = SourcePermission("s1", "Example work", permission_status=DEVELOPMENT_ONLY)
+        metadata = development_import_metadata(permission)
+        self.assertEqual(metadata["source_id"], "s1")
+        self.assertEqual(metadata["source_url"], "")
+        self.assertEqual(metadata["permission_status"], DEVELOPMENT_ONLY)
+        self.assertEqual(metadata["verification_status"], UNVERIFIED)
+        self.assertEqual(metadata["import_mode"], DEVELOPMENT)
+
+    def test_unsupported_ingestion_mode_is_blocked(self):
+        permission = SourcePermission("s1", "Example work", permission_status=APPROVED)
+        decision = evaluate_source(permission, mode="staging")
+        self.assertFalse(decision.allowed)
+        self.assertIn("unsupported ingestion mode", decision.reason)
 
 
 if __name__ == "__main__":

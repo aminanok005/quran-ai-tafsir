@@ -1,4 +1,4 @@
-const supportedEditions = new Set(['th.thai', 'ar.alafasy']);
+const supportedEditions = new Set(['th.thai', 'ar.alafasy', 'en.sahih', 'id.indonesian']);
 
 export const dynamic = 'force-dynamic';
 
