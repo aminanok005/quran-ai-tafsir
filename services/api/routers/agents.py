@@ -8,12 +8,18 @@ Provides access to 6 specialized Tafsir agents with evidence validation.
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import ValidationError
+from sqlalchemy.exc import SQLAlchemyError
 
 from ..config import settings
 from ..services import AgentOrchestratorService, EvidenceValidationService
+from ..services.chat_message_store import store_message_snapshot
+from ..services.embedding import EmbeddingConfigurationError, EmbeddingProviderError
 from ..services.quran_foundation_tafsir import QuranFoundationTafsirError
+from ..services.retrieval_scoring import qualifying_sources, score_retrieved_sources
 from .tafsir import (
     _api_source_url,
     _get_api_source_permission,
@@ -21,6 +27,7 @@ from .tafsir import (
     get_engine,
     get_qf_tafsir_client,
 )
+from .workspace import current_browser_id
 
 router = APIRouter(tags=["Agents"])
 logger = logging.getLogger(__name__)
@@ -37,7 +44,7 @@ async def _approved_source_passages(
 ) -> List[Dict[str, Any]]:
     """Fetch current API sources and admit only sources approved for AI use."""
     engine = get_engine()
-    approved_resources: list[tuple[int, Dict[str, Any]]] = []
+    approved_resources: list[tuple[str, int, Dict[str, Any]]] = []
     seen_resources: set[int] = set()
 
     for agent_type in agent_types:
@@ -47,7 +54,7 @@ async def _approved_source_passages(
         seen_resources.add(resource_id)
         permission = _get_api_source_permission(engine, resource_id)
         if _translation_is_allowed(permission) and permission is not None:
-            approved_resources.append((resource_id, permission))
+            approved_resources.append((agent_type, resource_id, permission))
 
     if not approved_resources:
         return []
@@ -55,16 +62,20 @@ async def _approved_source_passages(
     source_passages = []
     try:
         client = get_qf_tafsir_client()
-        for resource_id, permission in approved_resources:
+        for agent_type, resource_id, permission in approved_resources:
             passage = await client.fetch_ayah(resource_id, surah, ayah)
             source_passages.append({
                 "passage_id": f"qf:{passage.resource_id}:{passage.verse_key}",
+                "resource_id": passage.resource_id,
+                "verse_key": passage.verse_key,
                 "arabic_text": passage.text,
                 "volume": None,
                 "page": None,
                 "edition": passage.slug or None,
                 "book_title": passage.resource_name,
+                "scholar_id": agent_type,
                 "scholar_name": passage.resource_name,
+                "source_kind": "tafsir",
                 "permission_status": permission["permission_status"],
                 "verification_status": permission["verification_status"],
                 "license": permission["license"],
@@ -86,20 +97,47 @@ async def _approved_source_passages(
 
 def _validated_agent_context(context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     context = context or {}
-    unknown_fields = set(context) - {"question", "language"}
+    unknown_fields = set(context) - {"question", "language", "subquestions"}
     if unknown_fields:
         raise HTTPException(
             status_code=422,
-            detail="Agent context only accepts question and language fields",
+            detail="Agent context contains unsupported fields",
         )
     question = context.get("question")
     if question is not None and (
-        not isinstance(question, str) or len(question) > 2000
+        not isinstance(question, str) or len(question) > 2050
     ):
-        raise HTTPException(status_code=422, detail="Question must be text of at most 2000 characters")
+        raise HTTPException(status_code=422, detail="Question must be text of at most 2050 characters")
     language = context.get("language")
     if language is not None and language not in {"ar", "en", "th"}:
         raise HTTPException(status_code=422, detail="Language must be one of: ar, en, th")
+
+    subquestions = context.get("subquestions")
+    if subquestions is not None:
+        if (
+            not isinstance(subquestions, list)
+            or not 2 <= len(subquestions) <= 4
+            or any(
+                not isinstance(item, str) or not item.strip() or len(item) > 500
+                for item in subquestions
+            )
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="A batch must contain 2 to 4 non-empty prompts of at most 500 characters",
+            )
+        if len(set(subquestions)) != len(subquestions):
+            raise HTTPException(status_code=422, detail="Batch prompts must be unique")
+        expected_question = "\n".join(
+            f"{index}. {item}" for index, item in enumerate(subquestions, start=1)
+        )
+        if question != expected_question:
+            raise HTTPException(
+                status_code=422,
+                detail="Question text must match the numbered batch prompts",
+            )
+    elif isinstance(question, str) and len(question) > 2000:
+        raise HTTPException(status_code=422, detail="Question must be at most 2000 characters")
     return context
 
 
@@ -122,7 +160,9 @@ async def get_agent_explanation(
     ayah_id: str,
     agent_types: List[str],
     context: Optional[Dict[str, Any]] = None,
-    validate_output: bool = True
+    validate_output: bool = True,
+    session_id: UUID | None = None,
+    browser_id: UUID = Depends(current_browser_id),
 ):
     """Get Tafsir explanation from specified agents for a specific ayah."""
 
@@ -157,29 +197,120 @@ async def get_agent_explanation(
             )
 
         agent_context = _validated_agent_context(context)
-        agent_outputs = await agent_orchestrator.execute_agent_analysis(
-            surah,
-            ayah,
-            agent_types,
-            agent_context,
-            source_passages=source_passages,
-        )
-        if not agent_outputs["agents_executed"]:
-            raise HTTPException(
-                status_code=503,
-                detail="Agents could not produce output grounded in approved source passages",
+        subquestions = agent_context.get("subquestions")
+        if subquestions is None:
+            answer_data = await agent_orchestrator.execute_agent_analysis(
+                surah,
+                ayah,
+                agent_types,
+                agent_context,
+                source_passages=source_passages,
             )
+            if not answer_data["agents_executed"]:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Agents could not produce output grounded in approved source passages",
+                )
+            if validate_output:
+                answer_data["validation"] = evidence_validator.bulk_validate_agent_outputs(
+                    answer_data["agent_outputs"]
+                )
+        else:
+            sections = await agent_orchestrator.execute_agent_analysis_for_questions(
+                surah,
+                ayah,
+                agent_types,
+                subquestions,
+                agent_context,
+                source_passages=source_passages,
+            )
+            if not any(section["agents_executed"] for section in sections):
+                raise HTTPException(
+                    status_code=503,
+                    detail="Agents could not produce output grounded in approved source passages",
+                )
+            if validate_output:
+                for section in sections:
+                    section["validation"] = evidence_validator.bulk_validate_agent_outputs(
+                        section["agent_outputs"]
+                    )
 
-        # Validate outputs if requested
-        if validate_output:
-            validation_results = evidence_validator.bulk_validate_agent_outputs(
-                agent_outputs["agent_outputs"]
-            )
-            agent_outputs["validation"] = validation_results
+            summaries = [section.get("evidence_summary", {}) for section in sections]
+            answer_data = {
+                "ayah_id": f"{surah}:{ayah}",
+                "agents_executed": list(dict.fromkeys(
+                    agent_type
+                    for section in sections
+                    for agent_type in section["agents_executed"]
+                )),
+                "agent_outputs": {},
+                "sections": sections,
+                "comparative_analysis": None,
+                "evidence_summary": {
+                    key: sum(summary.get(key, 0) for summary in summaries)
+                    for key in (
+                        "total_sources",
+                        "verified_sources",
+                        "unverified_sources",
+                        "ai_synthesis",
+                    )
+                },
+                "processing_time": sum(
+                    section.get("processing_time", 0) for section in sections
+                ),
+                "created_at": datetime.now().isoformat(),
+            }
+
+        follow_up_metadata: dict[str, Any] = {
+            "session_id": str(session_id) if session_id else None,
+            "message_id": None,
+            "followups_available": False,
+        }
+        question = agent_context.get("question")
+        if session_id is not None and isinstance(question, str) and question.strip():
+            try:
+                scored_sources = await score_retrieved_sources(
+                    question,
+                    source_passages,
+                )
+                message_id = uuid4()
+                selected_source_ids = [
+                    source["passage_id"] for source in source_passages
+                ]
+                selected_agent_ids = list(dict.fromkeys(
+                    source["scholar_id"] for source in source_passages
+                ))
+                store_message_snapshot(
+                    get_engine(),
+                    browser_id=browser_id,
+                    session_id=session_id,
+                    message_id=message_id,
+                    question=question,
+                    surah=surah,
+                    ayah=ayah,
+                    selected_agent_ids=selected_agent_ids,
+                    selected_source_ids=selected_source_ids,
+                    source_snapshots=scored_sources,
+                )
+                follow_up_metadata.update({
+                    "message_id": str(message_id),
+                    "followups_available": bool(qualifying_sources(scored_sources)),
+                })
+            except (
+                EmbeddingConfigurationError,
+                EmbeddingProviderError,
+                SQLAlchemyError,
+                ValidationError,
+                ValueError,
+            ) as error:
+                logger.warning(
+                    "Grounded answer follow-ups unavailable (%s)",
+                    type(error).__name__,
+                )
 
         return {
             "success": True,
-            "data": agent_outputs,
+            "data": {**answer_data, **follow_up_metadata},
             "timestamp": datetime.now().isoformat()
         }
 

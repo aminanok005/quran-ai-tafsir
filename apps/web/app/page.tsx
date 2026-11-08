@@ -3,14 +3,33 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { apiClient } from '../src/lib/api/client';
-import type { TargetStudioArtifactData } from '../src/lib/api/client';
+import type {
+  AgentAnalysisResponse,
+  AgentAnalysisValidation,
+  AgentOutput,
+  SuggestedFollowUp,
+  TargetStudioArtifactData,
+  TranslationAudioCapabilities,
+} from '../src/lib/api/client';
 import { amiriQuran, notoSansThai } from '../src/components/ui/fonts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
-import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Sparkles } from 'lucide-react';
+import { Bookmark, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Sparkles } from 'lucide-react';
 import { SourcesPanel, StudioPanel, StudyContext } from '../src/components/workspace/WorkspacePanels';
+import { ReaderAudioControls } from '../src/components/workspace/ReaderAudioControls';
+import { SuggestedFollowUps } from '../src/components/workspace/SuggestedFollowUps';
 import { WorkspaceMobileTabs } from '../src/components/workspace/WorkspaceMobileTabs';
 import type { WorkspaceMobileView } from '../src/components/workspace/WorkspaceMobileTabs';
+import { createReaderAudioPlayback } from '../src/lib/quran/reader-audio-playback';
+import type {
+  ReaderAudioLanguage,
+  ReaderAudioMode,
+  ReaderAudioPlaybackState,
+  ReaderAudioSpeed,
+  ReaderTranslationVoiceEngine,
+  ReaderAudioVoice,
+  ReaderSpeechUtterance,
+} from '../src/lib/quran/reader-audio-playback';
 import {
   getWorkspaceShortcutAction,
   readWorkspaceLayout,
@@ -21,6 +40,18 @@ import {
 type DataRecord = Record<string, unknown>;
 type Status = 'idle' | 'loading' | 'success' | 'error' | 'empty';
 type CachedTafsir = { passage: DataRecord; translationError: string };
+type DialogueMessage = {
+  id: string;
+  contextKey: string;
+  question: string;
+  status: 'loading' | 'success' | 'error';
+  answer?: AgentAnalysisResponse;
+  error?: string;
+  sessionId?: string;
+  messageId?: string;
+  suggestions: SuggestedFollowUp[];
+  suggestionsStatus: 'loading' | 'success' | 'error';
+};
 
 const thaiTranslationCache = new Map<number, Promise<unknown>>();
 
@@ -54,6 +85,24 @@ function listOf(value: unknown): DataRecord[] {
   return [];
 }
 
+function requiredQuranListOf(value: unknown, label: string): DataRecord[] {
+  let collection: unknown;
+  if (Array.isArray(value)) {
+    collection = value;
+  } else if (isRecord(value)) {
+    const key = ['data', 'surahs', 'ayahs', 'translations'].find((name) => name in value);
+    if (key) collection = value[key];
+  }
+  if (!Array.isArray(collection)) {
+    throw new Error(`${label} มีรูปแบบข้อมูลไม่ถูกต้อง`);
+  }
+  const records = collection.filter(isRecord);
+  if (records.length !== collection.length) {
+    throw new Error(`${label} มีรูปแบบข้อมูลไม่ถูกต้อง`);
+  }
+  return records;
+}
+
 function textOf(value: unknown): string {
   if (typeof value === 'string') return value;
   if (!isRecord(value)) return '';
@@ -63,8 +112,8 @@ function textOf(value: unknown): string {
   return '';
 }
 
-async function getLocalQuran<T>(path: string): Promise<T> {
-  const response = await fetch(path);
+async function getLocalQuran<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(path, signal ? { signal } : undefined);
   if (!response.ok) {
     const body: unknown = await response.json();
     const detail = isRecord(body) && typeof body.detail === 'string' ? body.detail : 'โหลดข้อมูลอัลกุรอานไม่สำเร็จ';
@@ -89,6 +138,12 @@ function translationParagraphs(value: string): string[] {
   return value.split(/\r?\n\s*\r?\n/).map((paragraph) => paragraph.trim()).filter(Boolean);
 }
 
+function translationEdition(language: ReaderAudioLanguage): string {
+  if (language === 'th') return 'th.thai';
+  if (language === 'en') return 'en.sahih';
+  return 'id.indonesian';
+}
+
 function stringOf(value: unknown, ...keys: string[]): string {
   if (!isRecord(value)) return '';
   for (const key of keys) {
@@ -105,6 +160,14 @@ function safeHttpUrl(value: unknown): string {
   } catch {
     return '';
   }
+}
+
+function createUuid(): string {
+  const bytes = window.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 function numberOf(value: unknown, fallback: number): number {
@@ -135,6 +198,72 @@ function EvidenceBadge({ status }: { status?: string }) {
     'AI-SYNTHESIS': 'bg-violet-100 text-violet-800',
   };
   return <span className={`inline-flex rounded-full px-3 py-1 text-[10px] font-bold tracking-wide ${colors[status] ?? colors.UNVERIFIED}`}>{status}</span>;
+}
+
+function AgentAnswerCard({
+  agentType,
+  output,
+  validation,
+}: {
+  agentType: string;
+  output: AgentOutput;
+  validation?: AgentAnalysisValidation['agent_validations'][string];
+}) {
+  const explanation = typeof output.explanation === 'string'
+    ? output.explanation
+    : output.explanation
+      ? Object.values(output.explanation)
+        .filter((value): value is string => typeof value === 'string')
+        .join('\n\n')
+      : '';
+
+  return (
+    <article className="rounded-xl border border-surface-200 bg-white p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-sm font-bold text-surface-900">
+          {agents.find((item) => item.id === agentType)?.label ?? agentType}
+        </h4>
+        <EvidenceBadge status={validation?.evidence_level ?? output.evidence_level ?? 'UNVERIFIED'} />
+      </div>
+      {output.status === 'failed' || output.error
+        ? <p role="alert" className="mt-3 text-sm leading-6 text-amber-800">ไม่สามารถยืนยันคำตอบจากแหล่งที่อนุมัติได้: {output.error ?? 'การประมวลผลล้มเหลว'}</p>
+        : <p className="mt-3 whitespace-pre-line text-sm leading-7 text-surface-700">{explanation || 'ไม่มีคำอธิบายจากเอเจนต์'}</p>}
+      {validation && !validation.valid && (
+        <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-800">
+          คำตอบนี้ยังไม่ผ่านการตรวจสอบ: {validation.errors.join(' · ')}
+        </p>
+      )}
+      {output.citations?.length ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {output.citations.map((citation, index) => {
+            const href = safeHttpUrl(citation.reference.url);
+            const label = [
+              citation.reference.scholar,
+              citation.reference.book,
+              citation.reference.volume && `เล่ม ${citation.reference.volume}`,
+              citation.reference.page && `หน้า ${citation.reference.page}`,
+            ].filter(Boolean).join(' · ') || `แหล่งอ้างอิง ${index + 1}`;
+            return href
+              ? <a
+                key={`${citation.passage_id}-${index}`}
+                href={href}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[10px] font-medium text-emerald-800 hover:bg-emerald-100"
+              >
+                [{index + 1}] {label} · {citation.evidence_status}
+              </a>
+              : <span
+                key={`${citation.passage_id}-${index}`}
+                className="rounded-full bg-surface-100 px-3 py-1.5 text-[10px] text-surface-700"
+              >
+                [{index + 1}] {label} · {citation.evidence_status}
+              </span>;
+          })}
+        </div>
+      ) : null}
+    </article>
+  );
 }
 
 function BrandMark() {
@@ -307,6 +436,7 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
   const [surahs, setSurahs] = useState<DataRecord[]>([]);
   const [surah, setSurah] = useState(initialSurah);
   const [ayah, setAyah] = useState(initialAyah);
+  const [contentRequestVersion, setContentRequestVersion] = useState(0);
   const [ayahs, setAyahs] = useState<DataRecord[]>([]);
   const [translationsByAyah, setTranslationsByAyah] = useState<Record<number, string>>({});
   const [audioByAyah, setAudioByAyah] = useState<Record<number, string>>({});
@@ -319,6 +449,15 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
   const [error, setError] = useState('');
   const [ayahTranslationError, setAyahTranslationError] = useState('');
   const [audioError, setAudioError] = useState('');
+  const [playbackMode, setPlaybackMode] = useState<ReaderAudioMode>('recitation');
+  const [playbackLanguage, setPlaybackLanguage] = useState<ReaderAudioLanguage>('th');
+  const [playbackSettingsOpen, setPlaybackSettingsOpen] = useState(false);
+  const [translationVoiceEngine, setTranslationVoiceEngine] = useState<ReaderTranslationVoiceEngine>('device');
+  const [playbackSpeed, setPlaybackSpeed] = useState<ReaderAudioSpeed>(1);
+  const [translationAudioCapabilities, setTranslationAudioCapabilities] = useState<TranslationAudioCapabilities | null>(null);
+  const [translationAudioCapabilityError, setTranslationAudioCapabilityError] = useState('');
+  const [playbackState, setPlaybackState] = useState<ReaderAudioPlaybackState>('idle');
+  const [playbackStatus, setPlaybackStatus] = useState('พร้อมเล่นเสียง');
   const [translationError, setTranslationError] = useState('');
   const [search, setSearch] = useState('');
   const [arabicFontSize, setArabicFontSize] = useState(36);
@@ -327,22 +466,36 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
   const [centerView, setCenterView] = useState<'reader' | 'dialogue'>('reader');
   const [dialogueMode, setDialogueMode] = useState<'tafsir' | 'explain' | 'compare'>('tafsir');
   const [questionDraft, setQuestionDraft] = useState('');
-  const [submittedQuestion, setSubmittedQuestion] = useState('');
+  const [dialogueMessages, setDialogueMessages] = useState<DialogueMessage[]>([]);
+  const chatContextKey = `${surah}:${ayah}`;
+  const chatSessionRef = useRef<{ contextKey: string; epoch: number; sessionId: string | null }>({
+    contextKey: `${initialSurah}:${initialAyah}`,
+    epoch: 0,
+    sessionId: null,
+  });
+  if (chatSessionRef.current.contextKey !== chatContextKey) {
+    chatSessionRef.current = {
+      contextKey: chatContextKey,
+      epoch: chatSessionRef.current.epoch + 1,
+      sessionId: null,
+    };
+  }
   const [sourcesOpen, setSourcesOpen] = useState(true);
   const [studioOpen, setStudioOpen] = useState(true);
   const [selectedSources, setSelectedSources] = useState<string[]>(['quran']);
   const [panelLayout, setPanelLayout] = useState({ sources: 24, reader: 49, studio: 27 });
   const audioRef = useRef<HTMLAudioElement>(null);
+  const playbackControllerRef = useRef<ReturnType<typeof createReaderAudioPlayback> | null>(null);
+  const playbackAyahChangeRef = useRef<(nextAyah: number) => void>(() => {});
+  const spokenTranslationLoaderRef = useRef<
+    (targetSurah: number, language: ReaderAudioLanguage, signal: AbortSignal) => Promise<Record<number, string>>
+  >(async () => ({}));
+  const spokenTranslationCache = useRef(new Map<string, Record<number, string>>());
+  const translationAudioCapabilitiesRef = useRef<TranslationAudioCapabilities | null>(null);
+  translationAudioCapabilitiesRef.current = translationAudioCapabilities;
   const tafsirCache = useRef(new Map<string, CachedTafsir>());
   const tafsirRequests = useRef(new Map<string, Promise<CachedTafsir>>());
   const activeTafsirKey = useRef(`${initialSurah}:${initialAyah}:${agents[0].id}`);
-  const explanationQuery = useQuery({
-    queryKey: ['agents', 'explain', surah, ayah, agent, submittedQuestion],
-    queryFn: () => apiClient.getAgentExplanation(surah, ayah, agent, submittedQuestion),
-    enabled: centerView === 'dialogue' && dialogueMode === 'explain' && Boolean(submittedQuestion.trim()),
-    retry: false,
-    staleTime: 60_000,
-  });
   const comparisonQuery = useQuery({
     queryKey: ['agents', 'compare', surah, ayah],
     queryFn: () => apiClient.compareAgents(surah, ayah),
@@ -350,6 +503,24 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
     retry: false,
     staleTime: 60_000,
   });
+
+  useEffect(() => {
+    const request = new AbortController();
+    void apiClient.getTranslationAudioCapabilities(request.signal)
+      .then((capabilities) => {
+        if (request.signal.aborted) return;
+        setTranslationAudioCapabilities(capabilities);
+        setTranslationAudioCapabilityError('');
+      })
+      .catch((failure: unknown) => {
+        if (request.signal.aborted) return;
+        setTranslationAudioCapabilities(null);
+        setTranslationAudioCapabilityError(
+          failure instanceof Error ? failure.message : 'could not check AI audio availability',
+        );
+      });
+    return () => request.abort();
+  }, []);
 
   useEffect(() => {
     const savedLayout = readWorkspaceLayout(window.localStorage);
@@ -387,9 +558,14 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
   }, [initialSurah, initialAyah]);
 
   useEffect(() => {
+    setDialogueMessages([]);
+    setQuestionDraft('');
+  }, [surah, ayah]);
+
+  useEffect(() => {
     getLocalQuran<unknown>('/api/quran/surahs/')
       .then((data) => {
-        const items = listOf(data);
+        const items = requiredQuranListOf(data, 'สารบัญซูเราะฮ์');
         setSurahs(items);
         setSurahStatus(items.length ? 'success' : 'empty');
       })
@@ -411,7 +587,7 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
     setTafsir(null);
     getLocalQuran<unknown>(`/api/quran/surahs/${surah}/ayahs/`).then((surahData) => {
       if (cancelled) return;
-      const items = listOf(surahData);
+      const items = requiredQuranListOf(surahData, 'ข้อมูลอายะฮ์');
       setAyahs(items);
       setContentStatus(items.length ? 'success' : 'empty');
     }).catch((failure: unknown) => {
@@ -449,7 +625,108 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
       if (!cancelled) setAudioError(failure instanceof Error ? failure.message : 'โหลดข้อมูลเสียงอ่านไม่สำเร็จ');
     });
     return () => { cancelled = true; };
-  }, [surah]);
+  }, [contentRequestVersion, surah]);
+
+  spokenTranslationLoaderRef.current = async (targetSurah, language, signal) => {
+    const edition = language === 'th' ? 'th.thai' : language === 'en' ? 'en.sahih' : 'id.indonesian';
+    const cacheKey = `${targetSurah}:${edition}`;
+    const cached = spokenTranslationCache.current.get(cacheKey);
+    if (cached) return cached;
+    if (language === 'th' && targetSurah === surah && Object.keys(translationsByAyah).length > 0) {
+      return translationsByAyah;
+    }
+
+    const data = await getLocalQuran<unknown>(
+      `/api/quran/surahs/${targetSurah}/?edition=${edition}`,
+      signal,
+    );
+    const translations: Record<number, string> = {};
+    for (const verse of requiredQuranListOf(data, `คำแปลภาษา ${language}`)) {
+      const number = numberOf(verse, 0);
+      const text = textOf(verse).replace(/\u200B/g, '').trim();
+      if (number > 0 && text) translations[number] = text;
+    }
+    if (!signal.aborted) spokenTranslationCache.current.set(cacheKey, translations);
+    return translations;
+  };
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const synthesis = typeof window.speechSynthesis === 'undefined' ? null : window.speechSynthesis;
+    const speech = synthesis
+      ? {
+          getVoices: () => synthesis.getVoices(),
+          speak: (utterance: ReaderSpeechUtterance) => {
+            const nativeUtterance = new SpeechSynthesisUtterance(utterance.text);
+            nativeUtterance.lang = utterance.lang;
+            nativeUtterance.rate = utterance.rate;
+            const nativeVoice = synthesis.getVoices().find((voice) =>
+              utterance.voice.voiceURI
+                ? voice.voiceURI === utterance.voice.voiceURI
+                : voice.lang === utterance.voice.lang && voice.name === utterance.voice.name,
+            );
+            if (!nativeVoice) throw new Error(`ไม่พบเสียงพูดภาษา ${utterance.lang} ในเบราว์เซอร์`);
+            nativeUtterance.voice = nativeVoice;
+            nativeUtterance.onend = () => utterance.onend?.();
+            nativeUtterance.onerror = () => utterance.onerror?.();
+            synthesis.speak(nativeUtterance);
+          },
+          cancel: () => synthesis.cancel(),
+          addEventListener: (_type: 'voiceschanged', listener: () => void) => {
+            synthesis.addEventListener('voiceschanged', listener);
+          },
+          removeEventListener: (_type: 'voiceschanged', listener: () => void) => {
+            synthesis.removeEventListener('voiceschanged', listener);
+          },
+        }
+      : null;
+    const controller = createReaderAudioPlayback({
+      audio,
+      speech,
+      createUtterance: (text: string, voice: ReaderAudioVoice) => ({
+        text,
+        lang: voice.lang,
+        voice,
+        rate: 1,
+        onend: null,
+        onerror: null,
+      }),
+      loadTranslations: (targetSurah, language, signal) =>
+        spokenTranslationLoaderRef.current(targetSurah, language, signal),
+      loadGeneratedTranslationAudio: async (targetSurah, targetAyah, language, speed, signal) => {
+        const edition = translationEdition(language);
+        const capabilities = translationAudioCapabilitiesRef.current;
+        if (
+          !capabilities?.available
+          || !capabilities.supported_languages.includes(language)
+          || !capabilities.enabled_editions.includes(edition)
+        ) {
+          throw new Error('AI audio is unavailable for the selected translation edition.');
+        }
+        const generatedAudio = await apiClient.getTranslationAudio(
+          targetSurah,
+          targetAyah,
+          edition,
+          speed,
+          signal,
+        );
+        return {
+          url: URL.createObjectURL(generatedAudio.blob),
+          cacheStatus: generatedAudio.cacheStatus,
+        };
+      },
+      revokeGeneratedAudioUrl: (url) => URL.revokeObjectURL(url),
+      onAyahChange: (nextAyah) => playbackAyahChangeRef.current(nextAyah),
+      onStatus: setPlaybackStatus,
+      onStateChange: setPlaybackState,
+    });
+    playbackControllerRef.current = controller;
+    return () => {
+      controller.dispose();
+      playbackControllerRef.current = null;
+    };
+  }, []);
 
   const selectedSurah = useMemo(() => surahs.find((item) => numberOf(item, 0) === surah), [surahs, surah]);
   const surahName = stringOf(selectedSurah, 'name_th', 'name_simple', 'transliteration', 'name') || 'อัลกุรอาน';
@@ -548,6 +825,7 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
   }, [activateTafsir, surah, ayah, agent]);
 
   const selectSurah = (value: number) => {
+    if (playbackState !== 'idle') playbackControllerRef.current?.stop();
     setSurah(value);
     setAyah(1);
     setMobileSurahMenuOpen(false);
@@ -560,7 +838,7 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
     nextUrl.searchParams.set('ayah', '1');
     window.history.replaceState(null, '', nextUrl);
   };
-  const selectAyah = (value: number) => {
+  const updateAyahSelection = (value: number) => {
     setAyah(value);
     void activateTafsir(surah, value, agent);
     const nextUrl = new URL(window.location.href);
@@ -569,6 +847,108 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
     nextUrl.searchParams.set('ayah', String(value));
     window.history.replaceState(null, '', nextUrl);
   };
+  playbackAyahChangeRef.current = (nextAyah) => {
+    updateAyahSelection(nextAyah);
+    const scrollToAyah = () => {
+      const targets = document.querySelectorAll<HTMLElement>(`[data-reader-ayah="${nextAyah}"]`);
+      const visibleTarget = Array.from(targets).find((target) => target.getClientRects().length > 0) ?? targets[0];
+      visibleTarget?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    };
+    scrollToAyah();
+  };
+  const selectAyah = (value: number) => {
+    if (playbackState !== 'idle') playbackControllerRef.current?.stop();
+    updateAyahSelection(value);
+  };
+  const selectedTranslationEdition = translationEdition(playbackLanguage);
+  const aiVoiceAvailable = translationAudioCapabilities?.available === true
+    && translationAudioCapabilities.supported_languages.includes(playbackLanguage)
+    && translationAudioCapabilities.enabled_editions.includes(selectedTranslationEdition);
+  const aiVoiceUnavailableReason = translationAudioCapabilityError
+    ? `AI voice unavailable: ${translationAudioCapabilityError}. Device voice remains selected.`
+    : translationAudioCapabilities === null
+      ? 'Checking AI voice availability. Device voice remains available.'
+      : !translationAudioCapabilities.available
+        ? 'AI voice is not configured. Device voice remains available.'
+        : `AI voice is not enabled for ${selectedTranslationEdition}. Device voice remains available.`;
+  const playbackOptions = () => ({
+    surah,
+    ayah,
+    ayahNumbers: ayahs.map((item) => numberOf(item, 0)).filter((number) => number > 0),
+    audioByAyah,
+    mode: playbackMode,
+    language: playbackLanguage,
+    translationVoiceEngine,
+    speed: playbackSpeed,
+  });
+  const listenToAyah = () => {
+    const controller = playbackControllerRef.current;
+    if (!controller) {
+      setPlaybackStatus('ระบบเล่นเสียงยังไม่พร้อม กรุณาลองอีกครั้ง');
+      return;
+    }
+    void controller.startSingle(playbackOptions());
+  };
+  const startAutoPlayback = () => {
+    const controller = playbackControllerRef.current;
+    if (!controller) {
+      setPlaybackStatus('ระบบเล่นเสียงยังไม่พร้อม กรุณาลองอีกครั้ง');
+      return;
+    }
+    setSearch('');
+    void controller.startAuto(playbackOptions());
+  };
+  const stopPlayback = () => {
+    if (playbackState !== 'idle') playbackControllerRef.current?.stop();
+  };
+  const changePlaybackMode = (mode: ReaderAudioMode) => {
+    if (playbackState !== 'idle') playbackControllerRef.current?.stop();
+    setPlaybackMode(mode);
+  };
+  const changePlaybackLanguage = (language: ReaderAudioLanguage) => {
+    if (playbackState !== 'idle') playbackControllerRef.current?.stop();
+    setPlaybackLanguage(language);
+  };
+  const changeTranslationVoiceEngine = (engine: ReaderTranslationVoiceEngine) => {
+    if (playbackState !== 'idle') playbackControllerRef.current?.stop();
+    setTranslationVoiceEngine(engine);
+  };
+  const changePlaybackSpeed = (speed: ReaderAudioSpeed) => {
+    if (playbackState !== 'idle') playbackControllerRef.current?.stop();
+    setPlaybackSpeed(speed);
+  };
+  const translationVoiceUnavailable = playbackMode !== 'recitation'
+    && translationVoiceEngine === 'ai'
+    && !aiVoiceAvailable;
+  const playbackControls = (children: React.ReactNode) => (
+    <ReaderAudioControls
+      mode={playbackMode}
+      language={playbackLanguage}
+      playbackState={playbackState}
+      settingsOpen={playbackSettingsOpen}
+      onSettingsOpenChange={setPlaybackSettingsOpen}
+      translationVoiceEngine={translationVoiceEngine}
+      speed={playbackSpeed}
+      aiVoiceAvailable={aiVoiceAvailable}
+      aiVoiceUnavailableReason={aiVoiceUnavailableReason}
+      status={translationVoiceUnavailable
+        ? aiVoiceUnavailableReason
+        : playbackStatus === 'พร้อมเล่นเสียง' && audioError
+          ? `ยังโหลดเสียงอ่านไม่ได้: ${audioError}`
+          : playbackStatus}
+      listenDisabled={translationVoiceUnavailable || (playbackMode !== 'translation' && !audioUrl)}
+      autoDisabled={translationVoiceUnavailable || ((playbackMode !== 'translation' && !audioUrl) || ayahs.length === 0)}
+      onModeChange={changePlaybackMode}
+      onLanguageChange={changePlaybackLanguage}
+      onTranslationVoiceEngineChange={changeTranslationVoiceEngine}
+      onSpeedChange={changePlaybackSpeed}
+      onListen={listenToAyah}
+      onAuto={startAutoPlayback}
+      onStop={stopPlayback}
+    >
+      {children}
+    </ReaderAudioControls>
+  );
   const selectAgent = (agentId: string) => {
     setAgent(agentId);
     void activateTafsir(surah, ayah, agentId);
@@ -586,10 +966,107 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
     setCenterView('dialogue');
     setMobileView('dialogue');
   };
+  const updateDialogueMessage = (id: string, update: Partial<DialogueMessage>) => {
+    setDialogueMessages((messages) => messages.map((message) => (
+      message.id === id ? { ...message, ...update } : message
+    )));
+  };
+  const askQuestions = async (prompts: string[]) => {
+    const normalizedPrompts = prompts.map((prompt) => prompt.trim()).filter(Boolean);
+    if (normalizedPrompts.length === 0 || normalizedPrompts.length > 4) return;
+
+    const contextKey = chatContextKey;
+    const contextEpoch = chatSessionRef.current.epoch;
+    const sessionId = chatSessionRef.current.sessionId ?? createUuid();
+    chatSessionRef.current.sessionId = sessionId;
+    const messageId = createUuid();
+    const question = normalizedPrompts.length === 1
+      ? normalizedPrompts[0]
+      : normalizedPrompts.map((prompt, index) => `${index + 1}. ${prompt}`).join('\n');
+    const isBatch = normalizedPrompts.length > 1;
+    const pendingMessage: DialogueMessage = {
+      id: messageId,
+      contextKey,
+      question,
+      status: 'loading',
+      suggestions: [],
+      suggestionsStatus: 'success',
+    };
+    setDialogueMessages((messages) => [...messages, pendingMessage]);
+
+    try {
+      const answer = await apiClient.getAgentExplanation(
+        surah,
+        ayah,
+        agent,
+        question,
+        {
+          sessionId,
+          ...(isBatch ? { subquestions: normalizedPrompts } : {}),
+        },
+      );
+      if (chatSessionRef.current.epoch !== contextEpoch) return;
+
+      const responseSessionId = answer.data.session_id ?? sessionId;
+      const responseMessageId = answer.data.message_id ?? undefined;
+      chatSessionRef.current.sessionId = responseSessionId;
+      const canLoadSuggestions = Boolean(responseMessageId && answer.data.followups_available);
+      updateDialogueMessage(messageId, {
+        answer,
+        sessionId: responseSessionId,
+        messageId: responseMessageId,
+        status: 'success',
+        suggestionsStatus: canLoadSuggestions ? 'loading' : 'success',
+      });
+      if (!canLoadSuggestions || !responseMessageId) return;
+
+      try {
+        const result = await apiClient.getChatSuggestions(responseSessionId, responseMessageId);
+        if (chatSessionRef.current.epoch !== contextEpoch) return;
+        updateDialogueMessage(messageId, {
+          suggestions: result.suggestions.slice(0, 4),
+          suggestionsStatus: 'success',
+        });
+      } catch {
+        if (chatSessionRef.current.epoch !== contextEpoch) return;
+        updateDialogueMessage(messageId, { suggestionsStatus: 'error' });
+      }
+    } catch (failure: unknown) {
+      if (chatSessionRef.current.epoch !== contextEpoch) return;
+      updateDialogueMessage(messageId, {
+        error: failure instanceof Error ? failure.message : 'ยังสร้างคำตอบที่อ้างอิงหลักฐานไม่ได้',
+        status: 'error',
+        suggestionsStatus: 'error',
+      });
+    }
+  };
+  const refreshSuggestions = async (message: DialogueMessage) => {
+    if (
+      !message.sessionId
+      || !message.messageId
+      || message.contextKey !== chatContextKey
+    ) return;
+    const contextEpoch = chatSessionRef.current.epoch;
+    updateDialogueMessage(message.id, { suggestionsStatus: 'loading' });
+    try {
+      const result = await apiClient.getChatSuggestions(message.sessionId, message.messageId);
+      if (chatSessionRef.current.epoch !== contextEpoch) return;
+      updateDialogueMessage(message.id, {
+        suggestions: result.suggestions.slice(0, 4),
+        suggestionsStatus: 'success',
+      });
+    } catch {
+      if (chatSessionRef.current.epoch !== contextEpoch) return;
+      updateDialogueMessage(message.id, { suggestionsStatus: 'error' });
+    }
+  };
   const submitQuestion = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const question = questionDraft.trim();
-    if (question) setSubmittedQuestion(question);
+    if (question) {
+      setQuestionDraft('');
+      void askQuestions([question]);
+    }
   };
   const visiblePanelLayout = useMemo<number[]>(() => {
     const sourceSize = panelLayout.sources ?? 24;
@@ -716,46 +1193,74 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
           <form onSubmit={submitQuestion} className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3 sm:flex-row">
             <label htmlFor="agent-question" className="sr-only">คำถามเกี่ยวกับอายะฮ์</label>
             <input id="agent-question" value={questionDraft} onChange={(event) => setQuestionDraft(event.target.value)}
+              maxLength={2000}
               placeholder={`ถามเกี่ยวกับ ${surahName} ${surah}:${ayah}`}
-              className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-[#0E5E4F]" />
+              className="min-w-0 flex-1 rounded-lg border border-surface-200 px-3 py-2 text-sm outline-none focus:border-primary-800" />
             <button type="submit" disabled={!questionDraft.trim()} className="rounded-lg bg-[#0E5E4F] px-4 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">ถาม</button>
           </form>
-          {!submittedQuestion && <p className="text-xs leading-6 text-slate-500">คำตอบจะถูกสร้างจากแหล่งตัฟซีรที่ผ่านการอนุมัติเท่านั้น และจะแสดงที่มาของทุก citation</p>}
-          {explanationQuery.isFetching && <div className="animate-pulse rounded-xl border border-slate-200 bg-white p-4"><div className="h-3 w-2/3 rounded bg-slate-200" /><div className="mt-4 h-3 rounded bg-slate-100" /><div className="mt-2 h-3 w-4/5 rounded bg-slate-100" /></div>}
-          {explanationQuery.isError && <p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm leading-6 text-amber-800">{explanationQuery.error instanceof Error ? explanationQuery.error.message : 'ยังสร้างคำอธิบายที่อ้างอิงหลักฐานไม่ได้'}</p>}
-          {explanationQuery.data && Object.entries(explanationQuery.data.data.agent_outputs).map(([agentType, output]) => {
-            const explanation = typeof output.explanation === 'string'
-              ? output.explanation
-              : output.explanation && Object.values(output.explanation).filter((value): value is string => typeof value === 'string').join('\n\n');
-            const validation = explanationQuery.data.data.validation?.agent_validations[agentType];
-            return <article key={agentType} className="rounded-xl border border-slate-200 bg-white p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-sm font-bold text-slate-800">{agents.find((item) => item.id === agentType)?.label ?? agentType}</h3>
-                <EvidenceBadge status={validation?.evidence_level ?? output.evidence_level ?? 'UNVERIFIED'} />
+          {dialogueMessages.filter((message) => message.contextKey === chatContextKey).length === 0
+            && <p className="text-xs leading-6 text-surface-600">คำตอบจะถูกสร้างจากแหล่งตัฟซีรที่ผ่านการอนุมัติเท่านั้น และจะแสดงที่มาของทุก citation</p>}
+          {dialogueMessages
+            .filter((message) => message.contextKey === chatContextKey)
+            .map((message) => (
+              <div className="space-y-3" key={message.id}>
+                <article className="ml-auto max-w-[90%] rounded-xl bg-primary-50 p-3">
+                  <p className="text-[11px] font-semibold text-primary-800">คำถามของคุณ</p>
+                  <p className="mt-1 whitespace-pre-line text-sm leading-6 text-surface-900">{message.question}</p>
+                </article>
+                {message.status === 'loading' && (
+                  <div aria-label="กำลังสร้างคำตอบ" className="animate-pulse rounded-xl border border-surface-200 bg-white p-4" role="status">
+                    <div className="h-3 w-2/3 rounded bg-surface-200" />
+                    <div className="mt-4 h-3 rounded bg-surface-100" />
+                    <div className="mt-2 h-3 w-4/5 rounded bg-surface-100" />
+                  </div>
+                )}
+                {message.status === 'error' && (
+                  <p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm leading-6 text-amber-800">
+                    {message.error}
+                  </p>
+                )}
+                {message.status === 'success' && message.answer && (
+                  <div className="space-y-3">
+                    {message.answer.data.sections?.length
+                      ? message.answer.data.sections.map((section, index) => (
+                        <section
+                          aria-label={`คำตอบข้อที่ ${index + 1}`}
+                          className="space-y-3 rounded-xl border border-surface-200 bg-surface-50 p-3"
+                          key={`${message.id}-section-${index}`}
+                        >
+                          <h3 className="text-sm font-bold leading-6 text-surface-900">
+                            ข้อ {index + 1}: {section.question}
+                          </h3>
+                          {Object.entries(section.agent_outputs).map(([agentType, output]) => (
+                            <AgentAnswerCard
+                              agentType={agentType}
+                              key={`${message.id}-${index}-${agentType}`}
+                              output={output}
+                              validation={section.validation?.agent_validations[agentType]}
+                            />
+                          ))}
+                        </section>
+                      ))
+                      : Object.entries(message.answer.data.agent_outputs).map(([agentType, output]) => (
+                        <AgentAnswerCard
+                          agentType={agentType}
+                          key={`${message.id}-${agentType}`}
+                          output={output}
+                          validation={message.answer?.data.validation?.agent_validations[agentType]}
+                        />
+                      ))}
+                    <SuggestedFollowUps
+                      key={message.id}
+                      onAsk={(prompts) => { void askQuestions(prompts); }}
+                      onRefresh={() => { void refreshSuggestions(message); }}
+                      status={message.suggestionsStatus}
+                      suggestions={message.suggestions}
+                    />
+                  </div>
+                )}
               </div>
-              {output.status === 'failed' || output.error
-                ? <p role="alert" className="mt-3 text-sm leading-6 text-amber-800">ไม่สามารถยืนยันคำตอบจากแหล่งที่อนุมัติได้: {output.error ?? 'การประมวลผลล้มเหลว'}</p>
-                : <p className="mt-3 whitespace-pre-line text-sm leading-7 text-slate-700">{explanation || 'ไม่มีคำอธิบายจากเอเจนต์'}</p>}
-              {validation && !validation.valid && <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs leading-5 text-amber-800">คำตอบนี้ยังไม่ผ่านการตรวจสอบ: {validation.errors.join(' · ')}</p>}
-              {output.citations?.length ? <div className="mt-4 flex flex-wrap gap-2">
-                {output.citations.map((citation, index) => {
-                  const href = safeHttpUrl(citation.reference.url);
-                  const label = [
-                    citation.reference.scholar,
-                    citation.reference.book,
-                    citation.reference.volume && `เล่ม ${citation.reference.volume}`,
-                    citation.reference.page && `หน้า ${citation.reference.page}`,
-                  ].filter(Boolean).join(' · ') || `แหล่งอ้างอิง ${index + 1}`;
-                  return href
-                    ? <a key={`${citation.passage_id}-${index}`} href={href} target="_blank" rel="noreferrer"
-                      className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[10px] font-medium text-emerald-800 hover:bg-emerald-100">
-                      [{index + 1}] {label} · {citation.evidence_status}
-                    </a>
-                    : <span key={`${citation.passage_id}-${index}`} className="rounded-full bg-slate-100 px-3 py-1.5 text-[10px] text-slate-600">[{index + 1}] {label} · {citation.evidence_status}</span>;
-                })}
-              </div> : null}
-            </article>;
-          })}
+            ))}
         </div>}
         {dialogueMode === 'compare' && <div className="space-y-3">
           <p className="text-xs leading-6 text-slate-500">แสดงความเห็นต่างได้เมื่อมีข้ออ้างจากนักวิชาการหลายท่านพร้อม citation ที่ตรวจสอบย้อนกลับได้ ระบบจะไม่อนุมานความเห็นต่างจากชื่อสำนักหรือข้อความที่ยังไม่มีหลักฐาน</p>
@@ -808,9 +1313,9 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
           <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ค้นหาอายะฮ์ หรือคำสำคัญ" className="w-full bg-transparent text-sm outline-none placeholder:text-slate-500" />
         </label>
 
-        {contentStatus === 'loading' && <div className="space-y-4" aria-label="กำลังโหลดอายะฮ์"><div className="h-48 animate-pulse rounded-2xl bg-slate-200" /><div className="h-48 animate-pulse rounded-2xl bg-slate-200" /></div>}
-        {contentStatus === 'error' && <div className="rounded-2xl border border-amber-200 bg-white p-6 text-center shadow-[0_6px_20px_rgba(21,44,37,.04)]"><span className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-amber-50 text-lg text-amber-700">!</span><h2 className="mt-3 text-sm font-bold text-slate-800">ยังโหลดอายะฮ์ไม่ได้</h2><p className="mt-2 text-xs leading-6 text-slate-500">{error || 'ตรวจสอบการเชื่อมต่อ API แล้วลองใหม่'}</p><button onClick={() => selectAyah(ayah)} className="mt-4 rounded-xl bg-[#0E5E4F] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[#073B32]">ลองโหลดอีกครั้ง</button></div>}
-        {contentStatus === 'empty' && <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">ไม่พบข้อมูลอายะฮ์นี้</div>}
+        {contentStatus === 'loading' && <div role="status" aria-label="กำลังโหลดอายะฮ์" aria-busy="true" className="space-y-4"><div className="h-48 animate-pulse rounded-2xl bg-slate-200" /><div className="h-48 animate-pulse rounded-2xl bg-slate-200" /></div>}
+        {contentStatus === 'error' && <div role="alert" className="rounded-2xl border border-amber-200 bg-white p-6 text-center shadow-[0_6px_20px_rgba(21,44,37,.04)]"><span className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-amber-50 text-lg text-amber-700" aria-hidden="true">!</span><h2 className="mt-3 text-sm font-bold text-slate-800">ยังโหลดอายะฮ์ไม่ได้</h2><p className="mt-2 text-xs leading-6 text-slate-500">{error || 'ตรวจสอบการเชื่อมต่อ API แล้วลองใหม่'}</p><button onClick={() => setContentRequestVersion((version) => version + 1)} className="mt-4 rounded-xl bg-[#0E5E4F] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[#073B32]">ลองโหลดอีกครั้ง</button></div>}
+        {contentStatus === 'empty' && <div role="status" className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500"><span className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-full bg-[#F5F7F6] text-[#0E5E4F]" aria-hidden="true"><Icon name="book" className="h-5 w-5" /></span><p className="font-medium text-slate-700">ไม่พบข้อมูลอายะฮ์นี้</p><p className="mt-1 text-xs text-slate-500">ลองเลือกซูเราะฮ์อื่นจากแผง Sources</p></div>}
         {contentStatus === 'success' && (
           <div className="space-y-3">
             <div className="flex items-center justify-between px-1 text-[10px] text-slate-400">
@@ -822,8 +1327,8 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
               const selected = id === ayah;
               const verse = selected ? selectedArabic : textOf(item);
               const verseTranslation = translationsByAyah[id] ?? '';
-              return <article key={id} className="space-y-2">
-                <button type="button" aria-current={selected ? 'location' : undefined} onClick={() => selectAyah(id)} className={`group block w-full rounded-2xl border p-5 text-left transition md:p-6 ${selected ? 'border-[#0E5E4F] bg-[#E6F4F1] shadow-[0_8px_24px_rgba(14,94,79,.08)]' : 'border-[#dce4e1] bg-white hover:border-[#9bbdb3] hover:bg-[#fbfdfc]'}`}>
+              return <article key={id} data-reader-ayah={id} className={`reader-ayah-card space-y-2 ${selected && playbackSettingsOpen ? 'reader-ayah-card-settings-open' : ''}`}>
+                <button type="button" aria-current={selected ? 'location' : undefined} onClick={() => selectAyah(id)} className={`group block w-full rounded-2xl border p-5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0E5E4F]/30 md:p-6 ${selected ? 'border-2 border-[#0E5E4F] bg-[#E6F4F1] shadow-[0_8px_24px_rgba(14,94,79,.08)]' : 'border-[#dce4e1] bg-white hover:border-[#9bbdb3] hover:bg-[#fbfdfc]'}`}>
                   <div className="flex items-center justify-between text-xs font-semibold text-slate-500"><span className={`grid h-8 min-w-8 place-items-center rounded-full px-2 tabular-nums ${selected ? 'bg-[#0E5E4F] text-white' : 'bg-slate-100 text-slate-500 group-hover:bg-[#E6F4F1] group-hover:text-[#0E5E4F]'}`}>{id}</span>{selected && <span className="rounded-full bg-white/80 px-2.5 py-1 text-[10px] text-[#0E5E4F]">อายะฮ์ที่เลือก</span>}</div>
                   <p className={`${amiriQuran.className} mt-5 text-right leading-[2.1] text-slate-900`} style={{ fontSize: `${arabicFontSize}px`, fontFamily: `QpcV4Page${item.page_number}, ${amiriQuran.style.fontFamily}` }} dir="rtl" lang="ar">{verse || 'ไม่มีข้อความอาหรับจากแหล่งข้อมูล'}</p>
                   {verseTranslation
@@ -833,16 +1338,18 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
                     </span>
                     : <p className={`mt-4 border-t pt-4 text-xs leading-6 ${ayahTranslationError ? 'border-amber-200 text-amber-700' : 'border-[#0E5E4F]/10 text-slate-400'}`}>{translationStatus === 'loading' ? 'กำลังโหลดคำแปลภาษาไทย...' : ayahTranslationError ? `ยังโหลดคำแปลภาษาไทยไม่ได้: ${ayahTranslationError}` : 'ไม่มีคำแปลภาษาไทยสำหรับอายะฮ์นี้'}</p>}
                 </button>
-                {selected && <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
-                  <button type="button" onClick={() => { void saveNote(`${surahName} ${surah}:${ayah}`, [selectedArabic, translationsByAyah[ayah] ?? ''].filter(Boolean).join('\n\n'), studyContext).catch((failure: unknown) => setError(failure instanceof Error ? failure.message : 'บันทึกโน้ตไม่สำเร็จ')); }} className="rounded-lg px-3 py-2 text-[10px] font-semibold text-[#0E5E4F] hover:bg-[#E6F4F1]">Save to Note</button>
-                  <button type="button" onClick={() => { setCenterView('dialogue'); setMobileView('dialogue'); }} className="rounded-lg px-3 py-2 text-[10px] font-semibold text-[#0E5E4F] hover:bg-[#E6F4F1]">Ask AI / Explain</button>
-                  <button type="button" onClick={() => { if (audioRef.current) void audioRef.current.play(); }} disabled={!audioUrl} className="rounded-lg px-3 py-2 text-[10px] font-semibold text-[#0E5E4F] hover:bg-[#E6F4F1] disabled:cursor-not-allowed disabled:opacity-40">Listen Audio</button>
-                </div>}
-                {selected && audioUrl && <div className="rounded-xl border border-[#dce4e1] bg-white px-4 py-3">
-                  <p className="mb-2 text-xs font-medium text-slate-500">เสียงอ่าน · อัลอะฟาซี</p>
-                  <audio ref={audioRef} key={audioUrl} controls preload="none" src={audioUrl} aria-label={`เสียงอ่านอายะฮ์ ${surah}:${ayah} โดยอัลอะฟาซี`} className="h-10 w-full" />
-                </div>}
-                {selected && audioError && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">ยังโหลดเสียงอ่านไม่ได้: {audioError}</p>}
+                {selected && playbackControls(
+                  <>
+                    <button type="button" data-reader-action="save" onClick={() => { void saveNote(`${surahName} ${surah}:${ayah}`, [selectedArabic, translationsByAyah[ayah] ?? ''].filter(Boolean).join('\n\n'), studyContext).catch((failure: unknown) => setError(failure instanceof Error ? failure.message : 'บันทึกโน้ตไม่สำเร็จ')); }} className="reader-action-button reader-action-secondary">
+                      <Bookmark aria-hidden="true" size={18} />
+                      <span>บันทึกลงโน้ต</span>
+                    </button>
+                    <button type="button" data-reader-action="ask" onClick={() => { setCenterView('dialogue'); setMobileView('dialogue'); }} className="reader-action-button reader-action-secondary">
+                      <Sparkles aria-hidden="true" size={18} />
+                      <span>ถาม AI</span>
+                    </button>
+                  </>,
+                )}
               </article>;
             })}
             {filteredAyahs.length === 0 && <p className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-500">ไม่พบอายะฮ์ที่ตรงกับคำค้น</p>}
@@ -854,6 +1361,7 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
 
   return (
     <main className={`${notoSansThai.className} flex h-dvh flex-col overflow-hidden bg-[#F5F7F6] text-[#1E293B]`}>
+      <audio ref={audioRef} preload="none" className="sr-only" aria-hidden="true" data-testid="reader-playback-audio" />
       <header className="z-20 flex h-[68px] shrink-0 items-center justify-between gap-4 border-b border-[#dce4e1] bg-white px-4 lg:h-[76px] lg:px-7">
         <div className="flex min-w-0 items-center gap-3 lg:min-w-[190px]">
           <button type="button" aria-label="เปิดเมนูซูเราะฮ์" aria-expanded={mobileSurahMenuOpen} aria-controls="mobile-surah-menu" onClick={() => setMobileSurahMenuOpen(true)} className="rounded-lg p-2 text-[#073B32] hover:bg-slate-50 lg:hidden"><Icon name="menu" /></button>
@@ -936,9 +1444,9 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
               <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ค้นหาอายะฮ์ หรือคำสำคัญ" className="w-full bg-transparent text-sm outline-none placeholder:text-slate-500" />
             </label>
 
-            {contentStatus === 'loading' && <div className="space-y-4" aria-label="กำลังโหลดอายะฮ์"><div className="h-48 animate-pulse rounded-2xl bg-slate-200" /><div className="h-48 animate-pulse rounded-2xl bg-slate-200" /></div>}
-            {contentStatus === 'error' && <div className="rounded-2xl border border-amber-200 bg-white p-6 text-center shadow-[0_6px_20px_rgba(21,44,37,.04)]"><span className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-amber-50 text-lg text-amber-700">!</span><h2 className="mt-3 text-sm font-bold text-slate-800">ยังโหลดอายะฮ์ไม่ได้</h2><p className="mt-2 text-xs leading-6 text-slate-500">{error || 'ตรวจสอบการเชื่อมต่อ API แล้วลองใหม่'}</p><button onClick={() => selectAyah(ayah)} className="mt-4 rounded-xl bg-[#0E5E4F] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[#073B32]">ลองโหลดอีกครั้ง</button></div>}
-            {contentStatus === 'empty' && <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">ไม่พบข้อมูลอายะฮ์นี้</div>}
+            {contentStatus === 'loading' && <div role="status" aria-label="กำลังโหลดอายะฮ์" aria-busy="true" className="space-y-4"><div className="h-48 animate-pulse rounded-2xl bg-slate-200" /><div className="h-48 animate-pulse rounded-2xl bg-slate-200" /></div>}
+            {contentStatus === 'error' && <div role="alert" className="rounded-2xl border border-amber-200 bg-white p-6 text-center shadow-[0_6px_20px_rgba(21,44,37,.04)]"><span className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-amber-50 text-lg text-amber-700" aria-hidden="true">!</span><h2 className="mt-3 text-sm font-bold text-slate-800">ยังโหลดอายะฮ์ไม่ได้</h2><p className="mt-2 text-xs leading-6 text-slate-500">{error || 'ตรวจสอบการเชื่อมต่อ API แล้วลองใหม่'}</p><button onClick={() => setContentRequestVersion((version) => version + 1)} className="mt-4 rounded-xl bg-[#0E5E4F] px-4 py-2.5 text-xs font-semibold text-white transition hover:bg-[#073B32]">ลองโหลดอีกครั้ง</button></div>}
+            {contentStatus === 'empty' && <div role="status" className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500"><span className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-full bg-[#F5F7F6] text-[#0E5E4F]" aria-hidden="true"><Icon name="book" className="h-5 w-5" /></span><p className="font-medium text-slate-700">ไม่พบข้อมูลอายะฮ์นี้</p><p className="mt-1 text-xs text-slate-500">ลองเลือกซูเราะฮ์อื่นจากแผง Sources</p></div>}
             {contentStatus === 'success' && (
               <div className="space-y-3">
                 <div className="flex items-center justify-between px-1 text-[10px] text-slate-400">
@@ -950,8 +1458,8 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
                   const selected = id === ayah;
                   const verse = selected ? selectedArabic : textOf(item);
                   const verseTranslation = translationsByAyah[id] ?? '';
-                  return <article key={id} className="space-y-2">
-                    <button type="button" aria-current={selected ? 'location' : undefined} onClick={() => selectAyah(id)} className={`group block w-full rounded-2xl border p-5 text-left transition md:p-6 ${selected ? 'border-[#0E5E4F] bg-[#E6F4F1] shadow-[0_8px_24px_rgba(14,94,79,.08)]' : 'border-[#dce4e1] bg-white hover:border-[#9bbdb3] hover:bg-[#fbfdfc]'}`}>
+                  return <article key={id} data-reader-ayah={id} className={`reader-ayah-card space-y-2 ${selected && playbackSettingsOpen ? 'reader-ayah-card-settings-open' : ''}`}>
+                    <button type="button" aria-current={selected ? 'location' : undefined} onClick={() => selectAyah(id)} className={`group block w-full rounded-2xl border p-5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0E5E4F]/30 md:p-6 ${selected ? 'border-2 border-[#0E5E4F] bg-[#E6F4F1] shadow-[0_8px_24px_rgba(14,94,79,.08)]' : 'border-[#dce4e1] bg-white hover:border-[#9bbdb3] hover:bg-[#fbfdfc]'}`}>
                       <div className="flex items-center justify-between text-xs font-semibold text-slate-500"><span className={`grid h-8 min-w-8 place-items-center rounded-full px-2 tabular-nums ${selected ? 'bg-[#0E5E4F] text-white' : 'bg-slate-100 text-slate-500 group-hover:bg-[#E6F4F1] group-hover:text-[#0E5E4F]'}`}>{id}</span>{selected && <span className="rounded-full bg-white/80 px-2.5 py-1 text-[10px] text-[#0E5E4F]">อายะฮ์ที่เลือก</span>}</div>
                       <p className={`${amiriQuran.className} mt-5 text-right leading-[2.1] text-slate-900`} style={{ fontSize: `${arabicFontSize}px`, fontFamily: `QpcV4Page${item.page_number}, ${amiriQuran.style.fontFamily}` }} dir="rtl" lang="ar">{verse || 'ไม่มีข้อความอาหรับจากแหล่งข้อมูล'}</p>
                       {verseTranslation
@@ -961,16 +1469,18 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
                         </span>
                         : <p className={`mt-4 border-t pt-4 text-xs leading-6 ${ayahTranslationError ? 'border-amber-200 text-amber-700' : 'border-[#0E5E4F]/10 text-slate-400'}`}>{translationStatus === 'loading' ? 'กำลังโหลดคำแปลภาษาไทย...' : ayahTranslationError ? `ยังโหลดคำแปลภาษาไทยไม่ได้: ${ayahTranslationError}` : 'ไม่มีคำแปลภาษาไทยสำหรับอายะฮ์นี้'}</p>}
                     </button>
-                    {selected && <div className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-2">
-                      <button type="button" onClick={() => { void saveNote(`${surahName} ${surah}:${ayah}`, [selectedArabic, translationsByAyah[ayah] ?? ''].filter(Boolean).join('\n\n'), studyContext).catch((failure: unknown) => setError(failure instanceof Error ? failure.message : 'บันทึกโน้ตไม่สำเร็จ')); }} className="rounded-lg px-3 py-2 text-[10px] font-semibold text-[#0E5E4F] hover:bg-[#E6F4F1]">Save to Note</button>
-                      <button type="button" onClick={openAiExplanation} className="rounded-lg px-3 py-2 text-[10px] font-semibold text-[#0E5E4F] hover:bg-[#E6F4F1]">Ask AI / Explain</button>
-                      <button type="button" onClick={() => { if (audioRef.current) void audioRef.current.play(); }} disabled={!audioUrl} className="rounded-lg px-3 py-2 text-[10px] font-semibold text-[#0E5E4F] hover:bg-[#E6F4F1] disabled:cursor-not-allowed disabled:opacity-40">Listen Audio</button>
-                    </div>}
-                    {selected && audioUrl && <div className="rounded-xl border border-[#dce4e1] bg-white px-4 py-3">
-                      <p className="mb-2 text-xs font-medium text-slate-500">เสียงอ่าน · อัลอะฟาซี</p>
-                      <audio ref={audioRef} key={audioUrl} controls preload="none" src={audioUrl} aria-label={`เสียงอ่านอายะฮ์ ${surah}:${ayah} โดยอัลอะฟาซี`} className="h-10 w-full" />
-                    </div>}
-                    {selected && audioError && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">ยังโหลดเสียงอ่านไม่ได้: {audioError}</p>}
+                    {selected && playbackControls(
+                      <>
+                        <button type="button" data-reader-action="save" onClick={() => { void saveNote(`${surahName} ${surah}:${ayah}`, [selectedArabic, translationsByAyah[ayah] ?? ''].filter(Boolean).join('\n\n'), studyContext).catch((failure: unknown) => setError(failure instanceof Error ? failure.message : 'บันทึกโน้ตไม่สำเร็จ')); }} className="reader-action-button reader-action-secondary">
+                          <Bookmark aria-hidden="true" size={18} />
+                          <span>บันทึกลงโน้ต</span>
+                        </button>
+                        <button type="button" data-reader-action="ask" onClick={openAiExplanation} className="reader-action-button reader-action-secondary">
+                          <Sparkles aria-hidden="true" size={18} />
+                          <span>ถาม AI</span>
+                        </button>
+                      </>,
+                    )}
                   </article>;
                 })}
                 {filteredAyahs.length === 0 && <p className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-500">ไม่พบอายะฮ์ที่ตรงกับคำค้น</p>}

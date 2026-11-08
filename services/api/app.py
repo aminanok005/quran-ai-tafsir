@@ -21,7 +21,7 @@ import logging
 from datetime import datetime
 
 from .models import *
-from .routers import quran, agents, retrieval, tafsir, workspace
+from .routers import quran, agents, chat, retrieval, tafsir, workspace, translation_audio
 from .services import QuranAPIService, AgentOrchestratorService, EvidenceValidationService
 from .config import settings
 
@@ -43,6 +43,9 @@ async def lifespan(app: FastAPI):
         quran_api_service = QuranAPIService()
         agent_orchestrator = AgentOrchestratorService()
         citation_service = EvidenceValidationService()
+        app.state.translation_audio_service = (
+            translation_audio.create_translation_audio_service()
+        )
 
         # Test database connections
         # Test external API connectivity
@@ -51,10 +54,16 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to initialize services: {e}")
         raise
 
-    yield
-
-    # Shutdown
-    logger.info("Shutting down QURAN AI API service")
+    try:
+        yield
+    finally:
+        try:
+            translation_audio_service = getattr(app.state, "translation_audio_service", None)
+            if translation_audio_service is not None:
+                app.state.translation_audio_service = None
+                await translation_audio_service.aclose()
+        finally:
+            logger.info("Shutting down QURAN AI API service")
 
 app = FastAPI(
     title="QURAN AI API",
@@ -73,15 +82,18 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["X-Audio-Cache"],
 )
 
 # Include routers
 app.include_router(quran.router, prefix="/api/v1")
+app.include_router(chat.router, prefix="/api/v1")
 app.include_router(agents.router)
 app.include_router(agents.router, prefix="/api/v1/tafsir/agents", include_in_schema=False)
 app.include_router(tafsir.router, prefix="/api/v1")
 app.include_router(retrieval.router, prefix="/api/v1")
 app.include_router(workspace.router, prefix="/api/v1")
+app.include_router(translation_audio.router, prefix="/api/v1")
 
 @app.get("/health", tags=["health"])
 async def health() -> Dict[str, str]:

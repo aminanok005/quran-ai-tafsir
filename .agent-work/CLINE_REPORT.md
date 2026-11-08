@@ -228,3 +228,26 @@ Evidence supporting status: Complete Phase 0 implementation with all foundationa
 3. **Testing**: Establish CI/CD pipeline for automated testing
 4. **Security**: Implement proper authentication and rate limiting
 5. **Performance**: Optimize database queries and implement caching
+
+---
+
+## Current session: superpowers:subagent-driven-development (inline execution)
+
+### Files changed
+- `services/ingestion/test_policy.py`: added 5 edge-case tests (missing multiple metadata fields, empty license, development metadata with all-None optionals, unsupported ingestion mode)
+- `database/migrations/README.md`: expanded with ownership boundaries, canonical migration details, source permissions spec, safe workflow, and validation steps
+
+### Validation
+- `cd services/ingestion && python3 -m unittest test_policy test_parser test_postgres test_embedding test_search -v`: PASS, 30 tests (10 policy + 11 parser + 5 postgres + 3 embedding + 3 search)
+- Pre-existing `test_ingest_guard` import error (`No module named 'scripts'`) is unrelated to these changes
+- No PostgreSQL connection, migration, production DB, real ingestion, install, commit, push, or destructive Git operation performed
+
+### Blockers (unchanged)
+- Canonical Alembic migration files live under `services/api/migrations/` (backend owner), not `database/migrations/`
+- `scripts/load_tafsir_data.py` and `scripts/seed_quran_data.py` are outside Cline ownership
+- Existing `services/api/migrations/versions/0001_initial_setup.py` has malformed enum SQL quoting around `methodology` and creates indexes before the `tafsir_passages` table
+
+### Remaining work requiring Coordinator reassignment
+1. Reassign canonical Alembic migration files to Cline or grant explicit ownership approval
+2. Reassign `scripts/load_tafsir_data.py` and `scripts/seed_quran_data.py` to Cline or grant explicit ownership approval
+3. After reassignment, fix migration graph/order and seeder syntax/schema compatibility, then run disposable PostgreSQL validation only

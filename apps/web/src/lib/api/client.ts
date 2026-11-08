@@ -14,6 +14,19 @@ export type StudyNote = {
   updated_at: string;
 };
 
+export type TranslationAudioCapabilities = {
+  available: boolean;
+  supported_languages: ('th' | 'en' | 'id')[];
+  enabled_editions: string[];
+};
+
+export type TranslationAudioCacheStatus = 'hit' | 'miss' | 'unknown';
+
+export type TranslationAudio = {
+  blob: Blob;
+  cacheStatus: TranslationAudioCacheStatus;
+};
+
 export type StudioArtifactRequest = {
   kind: StudioArtifactKind;
   surah_number: number;
@@ -142,28 +155,53 @@ export type AgentOutput = {
   citations?: AgentCitation[];
 };
 
+export type AgentAnalysisValidation = {
+  overall_valid: boolean;
+  agent_validations: Record<string, {
+    valid: boolean;
+    errors: string[];
+    warnings: string[];
+    evidence_level: string;
+  }>;
+};
+
 export type AgentAnalysisResponse = {
   success: boolean;
   data: {
     ayah_id: string;
     agents_executed: string[];
     agent_outputs: Record<string, AgentOutput>;
+    sections?: Array<{
+      question: string;
+      ayah_id: string;
+      agents_executed: string[];
+      agent_outputs: Record<string, AgentOutput>;
+      validation?: AgentAnalysisValidation;
+    }>;
+    session_id?: string | null;
+    message_id?: string | null;
+    followups_available?: boolean;
     evidence_summary: {
       total_sources: number;
       verified_sources: number;
       unverified_sources: number;
       ai_synthesis: number;
     };
-    validation?: {
-      overall_valid: boolean;
-      agent_validations: Record<string, {
-        valid: boolean;
-        errors: string[];
-        warnings: string[];
-        evidence_level: string;
-      }>;
-    };
+    validation?: AgentAnalysisValidation;
   };
+};
+
+export type SuggestedFollowUp = {
+  id: string;
+  category: 'deepen' | 'compare' | 'context' | 'review' | 'source';
+  title: string;
+  prompt: string;
+  basisCount: number;
+  evidence: 'SOURCE_ATTRIBUTED' | 'AI_SYNTHESIS';
+};
+
+export type ChatSuggestionsResponse = {
+  suggestions: SuggestedFollowUp[];
 };
 
 // API Client - Client-side fetch wrapper
@@ -173,6 +211,29 @@ export class ApiClient {
 
   constructor(baseUrl: string) {
     this.baseUrl = baseUrl;
+  }
+
+  private async getTranslationAudioResponseError(response: Response): Promise<Error> {
+    const body = await response.text();
+    if (body.trim()) {
+      try {
+        const errorBody: unknown = JSON.parse(body);
+        const detail = typeof errorBody === 'object' && errorBody !== null
+          ? 'detail' in errorBody && typeof errorBody.detail === 'string'
+            ? errorBody.detail
+            : 'error' in errorBody && typeof errorBody.error === 'string'
+              ? errorBody.error
+              : 'message' in errorBody && typeof errorBody.message === 'string'
+                ? errorBody.message
+                : undefined
+          : undefined;
+        if (detail) return new Error(detail);
+      } catch {
+        // Non-JSON error bodies fall back to the HTTP status.
+      }
+    }
+
+    return new Error(`API Error: ${response.status} ${response.statusText}`);
   }
 
   private async request<T = any>(
@@ -212,6 +273,77 @@ export class ApiClient {
 
   async get<T = any>(endpoint: string): Promise<T> {
     return this.request<T>(endpoint);
+  }
+
+  async getTranslationAudioCapabilities(
+    signal?: AbortSignal,
+  ): Promise<TranslationAudioCapabilities> {
+    const response = await fetch(`${this.baseUrl}/api/v1/quran/translation-audio/capabilities`, {
+      signal,
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      throw await this.getTranslationAudioResponseError(response);
+    }
+
+    const payload: unknown = await response.json();
+    if (
+      typeof payload !== 'object'
+      || payload === null
+      || !('available' in payload)
+      || typeof payload.available !== 'boolean'
+      || !('supported_languages' in payload)
+      || !Array.isArray(payload.supported_languages)
+      || !payload.supported_languages.every((language) => (
+        language === 'th' || language === 'en' || language === 'id'
+      ))
+      || !('enabled_editions' in payload)
+      || !Array.isArray(payload.enabled_editions)
+      || !payload.enabled_editions.every((edition) => typeof edition === 'string')
+    ) {
+      throw new Error('Invalid translation audio capabilities response');
+    }
+
+    return {
+      available: payload.available,
+      supported_languages: payload.supported_languages,
+      enabled_editions: payload.enabled_editions,
+    };
+  }
+
+  async getTranslationAudio(
+    surah: number,
+    ayah: number,
+    edition: string,
+    speed: number,
+    signal?: AbortSignal,
+  ): Promise<TranslationAudio> {
+    const query = new URLSearchParams({
+      edition,
+      speed: String(speed),
+    });
+    const endpoint = `/api/v1/quran/translation-audio/${encodeURIComponent(String(surah))}/${encodeURIComponent(String(ayah))}?${query}`;
+    const response = await fetch(`${this.baseUrl}${endpoint}`, {
+      signal,
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      throw await this.getTranslationAudioResponseError(response);
+    }
+
+    const contentType = response.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
+    if (contentType !== 'audio/mpeg') {
+      throw new Error(`Invalid translation audio content type: ${contentType ?? 'missing'}; expected audio/mpeg`);
+    }
+
+    const cacheHeader = response.headers.get('X-Audio-Cache')?.trim().toLowerCase();
+    const cacheStatus: TranslationAudioCacheStatus = cacheHeader === 'hit' || cacheHeader === 'miss'
+      ? cacheHeader
+      : 'unknown';
+
+    return { blob: await response.blob(), cacheStatus };
   }
 
   async post<T = any>(endpoint: string, data: any): Promise<T> {
@@ -278,16 +410,32 @@ export class ApiClient {
     ayah: number,
     agentType: string,
     question = '',
+    options?: { sessionId: string; subquestions?: string[] },
   ): Promise<AgentAnalysisResponse> {
     const query = new URLSearchParams({
       ayah_id: `${surah}:${ayah}`,
     });
+    if (options) query.set('session_id', options.sessionId);
     return this.request<AgentAnalysisResponse>(`/tafsir/agents/explain?${query}`, {
       method: 'POST',
       body: JSON.stringify({
         agent_types: [agentType],
-        context: { question, language: 'th' },
+        context: {
+          question,
+          language: 'th',
+          ...(options?.subquestions ? { subquestions: options.subquestions } : {}),
+        },
       }),
+    });
+  }
+
+  async getChatSuggestions(
+    sessionId: string,
+    messageId: string,
+  ): Promise<ChatSuggestionsResponse> {
+    return this.request<ChatSuggestionsResponse>('/chat/suggestions', {
+      method: 'POST',
+      body: JSON.stringify({ session_id: sessionId, message_id: messageId }),
     });
   }
 
