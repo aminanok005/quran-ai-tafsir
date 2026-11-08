@@ -97,6 +97,10 @@ class AgentOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(sources), 1)
         self.assertEqual(sources[0]["passage_id"], "qf:168:1:1")
         self.assertEqual(sources[0]["arabic_text"], "Live Quran Foundation passage")
+        self.assertEqual(sources[0]["resource_id"], 168)
+        self.assertEqual(sources[0]["verse_key"], "1:1")
+        self.assertEqual(sources[0]["scholar_id"], "ibn_kathir")
+        self.assertEqual(sources[0]["source_kind"], "tafsir")
         self.assertEqual(
             sources[0]["source_reference"],
             "https://apis-prelive.quran.foundation/content/api/v4/tafsirs/168/by_ayah/1:1",

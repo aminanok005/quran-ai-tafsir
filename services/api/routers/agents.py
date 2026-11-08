@@ -59,12 +59,16 @@ async def _approved_source_passages(
             passage = await client.fetch_ayah(resource_id, surah, ayah)
             source_passages.append({
                 "passage_id": f"qf:{passage.resource_id}:{passage.verse_key}",
+                "resource_id": passage.resource_id,
+                "verse_key": passage.verse_key,
                 "arabic_text": passage.text,
                 "volume": None,
                 "page": None,
                 "edition": passage.slug or None,
                 "book_title": passage.resource_name,
+                "scholar_id": agent_type,
                 "scholar_name": passage.resource_name,
+                "source_kind": "tafsir",
                 "permission_status": permission["permission_status"],
                 "verification_status": permission["verification_status"],
                 "license": permission["license"],
