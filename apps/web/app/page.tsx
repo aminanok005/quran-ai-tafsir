@@ -30,6 +30,7 @@ import type {
   ReaderAudioVoice,
   ReaderSpeechUtterance,
 } from '../src/lib/quran/reader-audio-playback';
+import { buildTtsSettings, mapLanguageToEdition } from '../src/lib/quran/reader-audio-settings';
 import {
   getWorkspaceShortcutAction,
   readWorkspaceLayout,
@@ -136,12 +137,6 @@ function getThaiTranslation(surah: number): Promise<unknown> {
 
 function translationParagraphs(value: string): string[] {
   return value.split(/\r?\n\s*\r?\n/).map((paragraph) => paragraph.trim()).filter(Boolean);
-}
-
-function translationEdition(language: ReaderAudioLanguage): string {
-  if (language === 'th') return 'th.thai';
-  if (language === 'en') return 'en.sahih';
-  return 'id.indonesian';
 }
 
 function stringOf(value: unknown, ...keys: string[]): string {
@@ -695,7 +690,11 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
       loadTranslations: (targetSurah, language, signal) =>
         spokenTranslationLoaderRef.current(targetSurah, language, signal),
       loadGeneratedTranslationAudio: async (targetSurah, targetAyah, language, speed, signal) => {
-        const edition = translationEdition(language);
+        const editionConfig = mapLanguageToEdition(language);
+        if (!editionConfig) {
+          throw new Error('AI audio is unavailable for the selected translation edition.');
+        }
+        const edition = editionConfig.edition;
         const capabilities = translationAudioCapabilitiesRef.current;
         if (
           !capabilities?.available
@@ -860,17 +859,15 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
     if (playbackState !== 'idle') playbackControllerRef.current?.stop();
     updateAyahSelection(value);
   };
-  const selectedTranslationEdition = translationEdition(playbackLanguage);
-  const aiVoiceAvailable = translationAudioCapabilities?.available === true
-    && translationAudioCapabilities.supported_languages.includes(playbackLanguage)
-    && translationAudioCapabilities.enabled_editions.includes(selectedTranslationEdition);
-  const aiVoiceUnavailableReason = translationAudioCapabilityError
-    ? `AI voice unavailable: ${translationAudioCapabilityError}. Device voice remains selected.`
-    : translationAudioCapabilities === null
-      ? 'Checking AI voice availability. Device voice remains available.'
-      : !translationAudioCapabilities.available
-        ? 'AI voice is not configured. Device voice remains available.'
-        : `AI voice is not enabled for ${selectedTranslationEdition}. Device voice remains available.`;
+  const editionConfig = mapLanguageToEdition(playbackLanguage);
+  const ttsSettings = buildTtsSettings(
+    translationAudioCapabilities,
+    editionConfig?.edition ?? '',
+    playbackLanguage,
+    translationAudioCapabilityError,
+  );
+  const aiVoiceAvailable = ttsSettings.aiVoiceAvailable;
+  const aiVoiceUnavailableReason = ttsSettings.aiVoiceUnavailableReason;
   const playbackOptions = () => ({
     surah,
     ayah,
