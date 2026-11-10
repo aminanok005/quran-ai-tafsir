@@ -57,7 +57,7 @@ class IbnKathirAgent(BaseTafsirAgent):
         )
         
         # Validate citations and evidence
-        validation_result = await self._validate_ibn_kathir_explanation(explanation, sources)
+        validation_result = self._validate_ibn_kathir_explanation(explanation, sources)
         
         # Classify evidence level
         evidence_level = self._classify_ibn_kathir_evidence(explanation, sources)
@@ -90,60 +90,9 @@ class IbnKathirAgent(BaseTafsirAgent):
         """
         
         # Mock data representing Ibn Kathir's Tafsir
-        mock_sources = [
-            {
-                "source_id": "ibn_kathir_vol6_p565_section1",
-                "book": "Tafsir al-Qur'an al-Azim",
-                "author": "Ibn Kathir",
-                "volume": 6,
-                "page": 565,
-                "chapter": "Surah Al-Mulk section analysis",
-                "arabic_text": "وَلَا يَـٰـٔـمِنَ اٰـٔـلَّذِيۡـنَ اٰـٔـمَنُوا۟ اٰـٔـبۡـلَيۡـسََتَتَيَمَّنَّـوۡا۟ اٰـٔـِمَنۡـا تُـرِؔۡدُوا۟ اٰـٔـكۡـسَدََتَهُمۡـ اٰـٔـلَـتُـرُؐۡـدَُ+",
-                "thai_translation": "และเราจะยกอุทาหรณ์แก่พวกเขาถึงชาวเมืองผู้ซึ่งถูกส่งให้รับใช้...",
-                "interpretation": "Ibn Kathir cites narrations from the Companions regarding Antioch (Antakiya)...",
-                "hadith_references": [
-                    {
-                        "collection": "Sahih Bukhari",
-                        "hadith_id": "4854",
-                        "grading": "sahih",
-                        "text": "เรื่องนี้..."
-                    }
-                ],
-                "source_type": "tafsir_ma_thur",
-                "verification_status": "verified",
-                "confidence_score": 0.95,
-                "author_authority": "Ibn Kathir (d. 774 CE) - Scholar of Hadith and Tafsir",
-                "license": "Open access - King Fahd Complex",
-                "created_at": "2023-01-15T10:30:00Z"
-            },
-            {
-                "source_id": "ibn_kathir_vol6_p565_section2",
-                "book": "Tafsir al-Qur'an al-Azim",
-                "author": "Ibn Kathir",
-                "volume": 6,
-                "page": 565,
-                "chapter": "Historical context analysis",
-                "arabic_text": "إِذْ أَرۡسَـٰلۡنَا۟ اٰـٔـلَـهِمُ اثۡـنَيۡنَ فَكَذَّبَّوۡهُمَا...",
-                "thai_translation": "เมื่อเราส่งสองคนไปยังพวกเขา และพวกเขาปฏิเสธทั้งสองคน...",
-                "interpretation": "Al-Kathir provides detailed historical context from early Islamic sources...",
-                "hadith_references": [
-                    {
-                        "collection": "Musnad Ahmad",
-                        "hadith_id": "21501",
-                        "grading": "hasan",
-                        "text": "จากรายงานของ Ibn Abbas..."
-                    }
-                ],
-                "source_type": "tafsir_ma_thur",
-                "verification_status": "source_attributed",
-                "confidence_score": 0.88,
-                "author_authority": "Ibn Kathir (d. 774 CE) - Renowned Hadith scholar",
-                "license": "Open access - Maktabah Shamela",
-                "created_at": "2023-01-15T11:00:00Z"
-            }
-        ]
-        
-        return mock_sources
+        # Placeholder data removed: no source is returned until real, approved
+        # passages are wired in. Fabricated tafsir/hadith must never be served.
+        return []
     
     def _generate_ibn_kathir_explanation(
         self, 

@@ -52,3 +52,23 @@ class IbnKathirAgentRegressionTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("await", str(exc))
         except KeyError:
             pass  # separate legacy mock-data defect, out of scope here
+
+
+class PlaceholderRetrieversReturnNothingTests(unittest.TestCase):
+    def test_legacy_retrievers_never_return_placeholder_sources(self):
+        from services.api.agents.al_qurtubi_agent import AlQurtubiAgent
+        from services.api.agents.al_saadi_agent import AlSaadiAgent
+        from services.api.agents.al_tabari_agent import AlTabariAgent
+        from services.api.agents.al_zuhayli_agent import AlZuhayliAgent
+        from services.api.agents.ibn_ashur_agent import IbnAshurAgent
+        from services.api.agents.ibn_kathir_agent import IbnKathirAgent
+
+        for agent, name in [
+            (AlQurtubiAgent(), "al_qurtubi"),
+            (AlSaadiAgent(), "al_saadi"),
+            (AlTabariAgent(), "al_tabari"),
+            (AlZuhayliAgent(), "al_zuhayli"),
+            (IbnAshurAgent(), "ibn_ashur"),
+            (IbnKathirAgent(), "ibn_kathir"),
+        ]:
+            self.assertEqual(getattr(agent, f"_retrieve_{name}_sources")(1, 1), [], name)

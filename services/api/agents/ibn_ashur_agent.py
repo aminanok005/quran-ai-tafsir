@@ -79,7 +79,7 @@ class IbnAshurAgent(BaseTafsirAgent):
             "created_at": datetime.now().isoformat()
         }
         
-        validation = await self._validate_ibn_ashur_explanation(explanation, sources)
+        validation = self._validate_ibn_ashur_explanation(explanation, sources)
         explanation["validation"] = validation
         
         return explanation
@@ -92,35 +92,9 @@ class IbnAshurAgent(BaseTafsirAgent):
         """
         
         # Mock data representing Ibn Ashur's Al-Tahrir wa al-Tanwir
-        mock_sources = [
-            {
-                "source_id": "ibn_ashur_al_tahrir_vol3_p156",
-                "book": "Al-Tahrir wa al-Tanwir",
-                "author": "Ibn Ashur",
-                "volume": 3,
-                "page": 156,
-                "chapter": "Arabic rhetoric and Maqasid analysis",
-                "arabic_text": "إِذْ أَرْسَلْنَا إِلَيْهِمُ اثْنَيْنِ فَكَذَّبُوهُمَا فَعَزَّزْنَا بِهِمْ",
-                "thai_translation": "เมื่อเราส่งสองคนไปยังพวกเขา และพวกเขาปฏิเสธทั้งสองคน แล้วเราได้เสริมด้วยคนที่สาม",
-                "interpretation": "Ibn Ashur provides profound rhetorical analysis of the Arabic text structure, examining how the linguistic form itself conveys divine wisdom about communication strategies and the relationship between divine mercy and justice.",
-                "hadith_references": [
-                    {
-                        "collection": "Sahih Muslim",
-                        "hadith_id": "2689",
-                        "grading": "sahih",
-                        "text": "เรื่องราวการสื่อสารที่มีความหมายลึกซึ้ง..."
-                    }
-                ],
-                "source_type": "rhetorical_analysis",
-                "verification_status": "verified",
-                "confidence_score": 0.91,
-                "author_authority": "Ibn Ashur (d. 1100 CE) - Renowned scholar of Arabic rhetoric and Maqasid",
-                "license": "Open access - King Fahd Complex",
-                "created_at": "2023-01-15T10:45:00Z"
-            }
-        ]
-        
-        return mock_sources
+        # Placeholder data removed: no source is returned until real, approved
+        # passages are wired in. Fabricated tafsir/hadith must never be served.
+        return []
     
     def _validate_ibn_ashur_explanation(
         self, 

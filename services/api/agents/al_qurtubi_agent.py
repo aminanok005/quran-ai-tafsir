@@ -78,7 +78,7 @@ class AlQurtubiAgent(BaseTafsirAgent):
             "created_at": datetime.now().isoformat()
         }
         
-        validation = await self._validate_al_qurtubi_explanation(explanation, sources)
+        validation = self._validate_al_qurtubi_explanation(explanation, sources)
         explanation["validation"] = validation
         
         return explanation
@@ -91,60 +91,9 @@ class AlQurtubiAgent(BaseTafsirAgent):
         """
         
         # Mock data representing Al-Qurtubi's Jami' li-Ahkam al-Qur'an
-        mock_sources = [
-            {
-                "source_id": "al_qurtubi_jami_ahkam_vol4_p89",
-                "book": "Al-Jami' li-Ahkam al-Qur'an",
-                "author": "Al-Qurtubi",
-                "volume": 4,
-                "page": 89,
-                "chapter": "Legal rulings from Surah Al-Mulk",
-                "arabic_text": "إِذْ أَرْسَلْنَا إِلَيْهِمُ اثْنَيْنِ فَكَذَّبُوهُمَا فَعَزَّزْنَا بِهِمْ",
-                "thai_translation": "เมื่อเราส่งสองคนไปยังพวกเขา และพวกเขาปฏิเสธทั้งสองคน",
-                "interpretation": "Al-Qurtubi analyzes the legal implications of this verse regarding divine authority and human responsibility",
-                "hadith_references": [
-                    {
-                        "collection": "Sahih Muslim",
-                        "hadith_id": "2597",
-                        "grading": "sahih",
-                        "text": "เรื่องราวเกี่ยวกับการปฏิเสธสิ่งศักดิ์สิทธิ์..."
-                    }
-                ],
-                "source_type": "legal_analysis",
-                "verification_status": "verified",
-                "confidence_score": 0.95,
-                "author_authority": "Al-Qurtubi (d. 1020 CE) - Renowned jurist and jurist",
-                "license": "Open access - King Fahd Complex",
-                "created_at": "2023-01-15T10:15:00Z"
-            },
-            {
-                "source_id": "al_qurtubi_jami_ahkam_vol4_p89_section2",
-                "book": "Al-Jami' li-Ahkam al-Qur'an",
-                "author": "Al-Qurtubi",
-                "volume": 4,
-                "page": 89,
-                "chapter": "Comparative Madhhab analysis",
-                "arabic_text": "وَأَنْزَلْنَا إِلَيْهِمُ اثْنَيْنِ فَكَذَّبُوهُمَا فَعَزَّزْنَا بِهِمْ",
-                "thai_translation": "เมื่อเราส่งสองคนไปยังพวกเขา และพวกเขาปฏิเสธทั้งสองคน",
-                "interpretation": "Al-Qurtubi analyzes the legal implications and compares them with the views of the four major Madhhab schools",
-                "hadith_references": [
-                    {
-                        "collection": "Sunan al-Nasa'i",
-                        "hadith_id": "3052",
-                        "grading": "hasan",
-                        "text": "เรื่องราวเกี่ยวกับการปฏิเสธรูปแบบ..."
-                    }
-                ],
-                "source_type": "comparative_fiqh",
-                "verification_status": "verified",
-                "confidence_score": 0.94,
-                "author_authority": "Al-Qurtubi (d. 1020 CE) - Renowned jurist and jurist",
-                "license": "Open access - King Fahd Complex",
-                "created_at": "2023-01-15T10:30:00Z"
-            }
-        ]
-        
-        return mock_sources
+        # Placeholder data removed: no source is returned until real, approved
+        # passages are wired in. Fabricated tafsir/hadith must never be served.
+        return []
     
     def _validate_al_qurtubi_explanation(
         self, 
