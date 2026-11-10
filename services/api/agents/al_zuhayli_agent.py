@@ -34,54 +34,7 @@ class AlZuhayliAgent(BaseTafsirAgent):
             "Contemporary challenges and solutions"
         ]
     
-    async def explain_ayah(self, surah: int, ayah: int, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate Tafsir explanation using Al-Zuhayli's contemporary methodology."""
-        
-        sources = await self.retrieve_sources(surah, ayah, None)
-        
-        explanation = {
-            "source_id": "al_zuhayli_al_tafsir_al_munir_vol5_p234",
-            "scholar": "Wahbah Al-Zuhayli",
-            "methodology": "contemporary",
-            "arabic_original": "إِذْ أَرْسَلْنَا إِلَيْهِمُ اثْنَيْنِ فَكَذَّبُوهُمَا فَعَزَّزْنَا بِهِمْ",
-            "thai_translation": "เมื่อเราส่งสองคนไปยังพวกเขา และพวกเขาปฏิเสธทั้งสองคน แล้วเราได้เสริมด้วยคนที่สาม",
-            "analysis": (
-                "According to Al-Tafsir al-Munir (Vol 5, p. 234), Al-Zuhayli provides contemporary comparative fiqh analysis "
-                "that connects classical Tafsir to modern societal applications. He examines how this ayah's message applies "
-                "to contemporary challenges, addressing issues of religious tolerance, peaceful coexistence, and the role "
-                "of divine guidance in modern societies. Al-Zuhayli emphasizes the universal aspects of this revelation "
-                "and its relevance to current global challenges, connecting classical interpretation with contemporary applications."
-            ),
-            "key_points": [
-                "Contemporary comparative fiqh",
-                "Modern societal applications",
-                "Religious tolerance and coexistence",
-                "Universal message relevance",
-                "Modern challenges and solutions"
-            ],
-            "citations": [
-                {
-                    "source_id": "al_zuhayli_al_tafsir_al_munir_vol5",
-                    "reference": "Al-Tafsir al-Munir, Vol 5, p. 234",
-                    "excerpt": "บทเรียนนี้สอนให้เรารู้ถึงความสำคัญในสังคมยุคใหม่..."
-                }
-            ],
-            "confidence": 0.89,
-            "scholarly_position": "Contemporary comparative jurisprudence",
-            "methodology_notes": "Focus on modern applications and comparative analysis",
-            "limitations": [
-                "May require additional classical context",
-                "Modern bias potential"
-            ],
-            "evidence_level": "SOURCE-ATTRIBUTED",
-            "created_at": datetime.now().isoformat()
-        }
-        
-        validation = await self._validate_al_zuhayli_explanation(explanation, sources)
-        explanation["validation"] = validation
-        
-        return explanation
-    
+
     def _retrieve_al_zuhayli_sources(self, surah: int, ayah: int) -> List[Dict[str, Any]]:
         """
         Retrieve sources from Al-Zuhayli's Al-Tafsir al-Munir.
@@ -90,65 +43,9 @@ class AlZuhayliAgent(BaseTafsirAgent):
         """
         
         # Mock data representing Al-Zuhayli's Al-Tafsir al-Munir
-        mock_sources = [
-            {
-                "source_id": "al_zuhayli_al_tafsir_al_munir_vol5_p234",
-                "book": "Al-Tafsir al-Munir",
-                "author": "Wahbah Al-Zuhayli",
-                "volume": 5,
-                "page": 234,
-                "chapter": "Contemporary applications of classical texts",
-                "arabic_text": "إِذْ أَرْسَلْنَا إِلَيْهِمُ اثْنَيْنِ فَكَذَّبُوهُمَا فَعَزَّزْنَا بِهِمْ",
-                "thai_translation": "เมื่อเราส่งสองคนไปยังพวกเขา และพวกเขาปฏิเสธทั้งสองคน แล้วเราได้เสริมด้วยคนที่สาม",
-                "interpretation": "Al-Zuhayli provides contemporary comparative fiqh analysis that connects classical interpretation "
-                "with modern societal applications, examining how this ayah's message applies to contemporary challenges "
-                "related to religious tolerance, peaceful coexistence, and the role of divine guidance in modern societies.",
-                "hadith_references": [
-                    {
-                        "collection": "Al-Muwatta",
-                        "hadith_id": "1234",
-                        "grading": "hasan",
-                        "text": "เรื่องราวการสื่อสารที่มีความหมายลึกซึ้ง..."
-                    }
-                ],
-                "source_type": "contemporary_fiqh",
-                "verification_status": "source_attributed",
-                "confidence_score": 0.88,
-                "author_authority": "Wahbah Al-Zuhayli (d. 2008 CE) - Contemporary jurist and scholar",
-                "license": "Open access - King Fahd Complex",
-                "created_at": "2023-01-15T11:15:00Z"
-            },
-            {
-                "source_id": "al_zuhayli_al_tafsir_al_munir_vol5_p234_section2",
-                "book": "Al-Tafsir al-Munir",
-                "author": "Wahbah Al-Zuhayli",
-                "volume": 5,
-                "page": 234,
-                "chapter": "Contemporary applications and societal implications",
-                "arabic_text": "وَإِنْ أَذِنَا بِهِمْ إِنَّهُمْ يَعُودُونَ إِلَىٰ عَادَاتِهِمْ",
-                "thai_translation": "และพวกเขากลับไปสู่แนวทางเก่าแก่ของพวกเขา",
-                "interpretation": "Al-Zuhayli examines how this ayah's message applies to contemporary challenges, "
-                "particularly in the context of religious tolerance, peaceful coexistence, and the role of divine guidance "
-                "in addressing modern societal challenges. He emphasizes the universal message and its relevance "
-                "to contemporary global challenges.",
-                "hadith_references": [
-                    {
-                        "collection": "Sunan al-Bayhaqi",
-                        "hadith_id": "12345",
-                        "grading": "hasan",
-                        "text": "เรื่องราวการสื่อสารที่มีความหมายลึกซึ้ง..."
-                    }
-                ],
-                "source_type": "contemporary_fiqh",
-                "verification_status": "source_attributed",
-                "confidence_score": 0.89,
-                "author_authority": "Wahbah Al-Zuhayli (d. 2008 CE) - Contemporary jurist and scholar",
-                "license": "Open access - King Fahd Complex",
-                "created_at": "2023-01-15T11:30:00Z"
-            }
-        ]
-        
-        return mock_sources
+        # Placeholder data removed: no source is returned until real, approved
+        # passages are wired in. Fabricated tafsir/hadith must never be served.
+        return []
     
     def _validate_al_zuhayli_explanation(
         self, 

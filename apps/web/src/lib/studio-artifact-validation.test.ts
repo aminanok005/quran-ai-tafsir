@@ -62,6 +62,19 @@ function expectInvalid(kind: 'audio' | 'quiz' | 'infographic', artifact: unknown
 }
 
 describe('validateStudioArtifactEdit', () => {
+  it('keeps a valid quiz source_passage_id and rejects an invalid one', () => {
+    const quiz = artifactFor('quiz');
+    (quiz.content.questions[0] as Record<string, unknown>).source_passage_id = 'quran';
+    const ok = validateStudioArtifactEdit('quiz', JSON.stringify(quiz));
+    expect(ok.valid).toBe(true);
+    if (ok.valid) {
+      expect((ok.artifact as any).content.questions[0].source_passage_id).toBe('quran');
+    }
+
+    (quiz.content.questions[0] as Record<string, unknown>).source_passage_id = '';
+    expect(validateStudioArtifactEdit('quiz', JSON.stringify(quiz)).valid).toBe(false);
+  });
+
   it('accepts inclusive boundaries for all structured artifact kinds', () => {
     const audio = artifactFor('audio');
     audio.title = 'T'.repeat(160);

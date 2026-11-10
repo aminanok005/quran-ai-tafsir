@@ -34,54 +34,7 @@ class AlSaadiAgent(BaseTafsirAgent):
             "Accessible language for general readers"
         ]
     
-    async def explain_ayah(self, surah: int, ayah: int, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate Tafsir explanation using Al-Sa'di's clear methodology."""
-        
-        sources = await self.retrieve_sources(surah, ayah, None)
-        
-        explanation = {
-            "source_id": "al_saadi_taysir_vol2_p78",
-            "scholar": "Al-Sa'di",
-            "methodology": "linguistic",
-            "arabic_original": "إِذْ أَرْسَلْنَا إِلَيْهِمُ اثْنَيْنِ فَكَذَّبُوهُمَا فَعَزَّزْنَا بِهِمْ",
-            "thai_translation": "เมื่อเราส่งสองคนไปยังพวกเขา และพวกเขาปฏิเสธทั้งสองคน แล้วเราได้เสริมด้วยคนที่สาม",
-            "analysis": (
-                "According to Taysir al-Karim al-Rahman (Vol 2, p. 78), Al-Sa'di provides clear and accessible explanations "
-                "that make the Qur'anic message understandable for general readers. This ayah illustrates how divine mercy "
-                "works through progressive guidance - sending messengers, receiving rejection, then strengthening the message "
-                "with additional support. Al-Sa'di emphasizes the practical spiritual lessons about patience, perseverance, "
-                "and the importance of not giving up when faced with opposition to the truth."
-            ),
-            "key_points": [
-                "Clear and accessible language",
-                "Practical spiritual guidance",
-                "Progressive divine mercy",
-                "Patience in the face of rejection",
-                "Strengthening through additional support"
-            ],
-            "citations": [
-                {
-                    "source_id": "al_saadi_taysir_vol2",
-                    "reference": "Taysir al-Karim al-Rahman, Vol 2, p. 78",
-                    "excerpt": "บทเรียนสำคัญคือการที่เราไม่ควรหมดหวังแม้ต้องเผชิญกับความยากลำบาก..."
-                }
-            ],
-            "confidence": 0.97,
-            "scholarly_position": "Practical spiritual guidance",
-            "methodology_notes": "Focus on clear communication and practical spirituality",
-            "limitations": [
-                "May oversimplify complex theological concepts",
-                "Less detailed historical analysis"
-            ],
-            "evidence_level": "VERIFIED",
-            "created_at": datetime.now().isoformat()
-        }
-        
-        validation = await self._validate_al_saadi_explanation(explanation, sources)
-        explanation["validation"] = validation
-        
-        return explanation
-    
+
     def _retrieve_al_saadi_sources(self, surah: int, ayah: int) -> List[Dict[str, Any]]:
         """
         Retrieve sources from Al-Sa'di's Taysir al-Karim al-Rahman.
@@ -90,61 +43,9 @@ class AlSaadiAgent(BaseTafsirAgent):
         """
         
         # Mock data representing Al-Sa'di's Taysir al-Karim al-Rahman
-        mock_sources = [
-            {
-                "source_id": "al_saadi_taysir_vol2_p78",
-                "book": "Taysir al-Karim al-Rahman",
-                "author": "Al-Sa'di",
-                "volume": 2,
-                "page": 78,
-                "chapter": "Spiritual guidance and practical guidance",
-                "arabic_text": "إِذْ أَرْسَلْنَا إِلَيْهِمُ اثْنَيْنِ فَكَذَّبُوهُمَا فَعَزَّزْنَا بِهِمْ",
-                "thai_translation": "เมื่อเราส่งสองคนไปยังพวกเขา และพวกเขาปฏิเสธทั้งสองคน แล้วเราได้เสริมด้วยคนที่สาม",
-                "interpretation": "Al-Sa'di provides clear and accessible explanations that make the Qur'anic message understandable for general readers. "
-                "This ayah illustrates how divine guidance progresses through stages: initial sending of messengers, rejection, and then strengthening with additional support.",
-                "hadith_references": [
-                    {
-                        "collection": "Taysir al-Karim al-Rahman",
-                        "hadith_id": "78",
-                        "grading": "sahih",
-                        "text": "บทเรียนสำคัญคือการที่เราไม่ควรหมดหวังแม้ต้องเผชิญกับความยากลำบาก..."
-                    }
-                ],
-                "source_type": "spiritual_guidance",
-                "verification_status": "verified",
-                "confidence_score": 0.97,
-                "author_authority": "Al-Sa'di (d. 1372 CE) - Renowned scholar of Islamic spirituality",
-                "license": "Open access - King Fahd Complex",
-                "created_at": "2023-01-15T11:00:00Z"
-            },
-            {
-                "source_id": "al_saadi_taysir_vol2_p78_section2",
-                "book": "Taysir al-Karim al-Rahman",
-                "author": "Al-Sa'di",
-                "volume": 2,
-                "page": 78,
-                "chapter": "Spiritual guidance and practical application",
-                "arabic_text": "وَإِنْ رَبِّيَ سَنِزَعَ عَنْهُ الْبَحْثَ",
-                "thai_translation": "ถ้าเราถอนคำสอนนั้นจากเขา",
-                "interpretation": "Al-Sa'di explains that divine guidance is progressive, with additional support provided when initial guidance is rejected.",
-                "hadith_references": [
-                    {
-                        "collection": "Taysir al-Karim al-Rahman",
-                        "hadith_id": "78",
-                        "grading": "sahih",
-                        "text": "บทเรียนสำคัญคือการที่เราไม่ควรหมดหวังแม้ต้องเผชิญกับความยากลำบาก..."
-                    }
-                ],
-                "source_type": "spiritual_guidance",
-                "verification_status": "verified",
-                "confidence_score": 0.95,
-                "author_authority": "Al-Sa'di (d. 1372 CE) - Renowned scholar of Islamic spirituality",
-                "license": "Open access - King Fahd Complex",
-                "created_at": "2023-01-15T11:15:00Z"
-            }
-        ]
-        
-        return mock_sources
+        # Placeholder data removed: no source is returned until real, approved
+        # passages are wired in. Fabricated tafsir/hadith must never be served.
+        return []
     
     def _validate_al_saadi_explanation(
         self, 

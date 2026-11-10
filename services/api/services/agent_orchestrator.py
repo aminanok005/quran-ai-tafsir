@@ -154,7 +154,7 @@ class AgentOrchestratorService:
             "ayah_id": f"{surah}:{ayah}",
             "agents_executed": succeeded,
             "agent_outputs": outputs,
-            "comparative_analysis": None,
+            "comparative_analysis": self._ikhtilaf_matrix(surah, ayah, outputs, agent_types),
             "evidence_summary": evidence_summary,
             "processing_time": time.perf_counter() - started,
             "created_at": datetime.now().isoformat()
@@ -236,6 +236,41 @@ class AgentOrchestratorService:
                 "evidence_status": "VERIFIED",
             })
         return canonical_citations
+
+    @staticmethod
+    def _ikhtilaf_matrix(
+        surah: int,
+        ayah: int,
+        outputs: Dict[str, Any],
+        agent_types: List[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Side-by-side approved texts only; agreement and disagreement are never inferred."""
+        rows = []
+        for agent_type in agent_types:
+            output = outputs.get(agent_type)
+            if not isinstance(output, dict) or output.get("status") == "failed":
+                continue
+            citation = output["citations"][0]
+            rows.append({
+                "scholar_id": agent_type,
+                "scholar_name": output.get("scholar_name"),
+                "text": output["explanation"],
+                "passage_id": citation["passage_id"],
+                "reference": citation["reference"],
+                "evidence_status": "VERIFIED",
+            })
+        if len(rows) < 2:
+            return None
+        unverified = {"status": "UNVERIFIED", "note": "Not determined from source text alone"}
+        return {
+            "ayah_id": f"{surah}:{ayah}",
+            "scholars": rows,
+            "agreement": dict(unverified),
+            "disagreement": dict(unverified),
+            "hadith_evidence": dict(unverified),
+            "fiqh_implications": dict(unverified),
+            "evidence_status": "SOURCE-ATTRIBUTED",
+        }
 
     async def _generate_comparative_analysis(
         self,

@@ -29,7 +29,7 @@ ARTIFACT_INSTRUCTIONS = {
     "report": "Write a concise, structured scholarly learning briefing in sections.",
     "slides": "Create a teaching slide deck with concise slide titles, bullets, and speaker notes.",
     "video": "Create a short explainer video storyboard with narration and visual directions per scene.",
-    "flashcards": "Create Arabic vocabulary and comprehension flashcards only when supported by the supplied source.",
+    "flashcards": "Create Arabic vocabulary and comprehension flashcards only when supported by the supplied source. Each flashcard object must have front, back and source_passage_id, where source_passage_id is one of the ids in source_context.source_ids.",
     "quiz": "Create comprehension questions with exactly three answer options and one source-supported correct answer.",
     "infographic": "Create concise infographic sections, key points, and a suggested visual hierarchy.",
     "comparison": "Create a comparison table. Do not invent scholar differences; report only explicit supplied views.",
@@ -71,6 +71,17 @@ def _validate_content(kind: ArtifactKind, content: object) -> dict[str, Any]:
     return result
 
 
+def _validate_flashcard_sources(cards: list[Any], allowed: set[str]) -> None:
+    for card in cards:
+        if (
+            not isinstance(card, dict)
+            or not isinstance(card.get("front"), str)
+            or not isinstance(card.get("back"), str)
+            or card.get("source_passage_id") not in allowed
+        ):
+            raise StudioGenerationError("Flashcards must cite a supplied source")
+
+
 async def generate_artifact(
     kind: ArtifactKind,
     source_context: dict[str, Any],
@@ -81,6 +92,7 @@ async def generate_artifact(
     wire_api: str,
     timeout: float = 90,
     transport: httpx.AsyncBaseTransport | None = None,
+    allowed_source_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     structured_kind = kind in {"audio", "quiz", "infographic"}
     instructions = (
@@ -92,7 +104,8 @@ async def generate_artifact(
             "Return only a JSON object with exactly the keys title, summary, content. "
             "For audio, content must contain 4-8 alternating Host A and Host B segments, "
             "starting with Host A, with Thai-script text. For quiz, content must contain "
-            "exactly five questions with three options each and answer_index 0, 1, or 2. "
+            "exactly five questions with three options each and answer_index 0, 1, or 2, "
+            "and each question may include source_passage_id taken only from source_context.source_ids. "
             "For infographic, content must contain a takeaway and 3-6 cards "
             "with 2-5 points each. "
             if structured_kind
@@ -156,5 +169,14 @@ async def generate_artifact(
     except (KeyError, IndexError, TypeError, ValueError):
         raise StudioGenerationError("Provider response is not valid JSON") from None
     if structured_kind:
-        return validate_studio_artifact_envelope(kind, decoded)
-    return _validate_content(kind, decoded)
+        artifact = validate_studio_artifact_envelope(kind, decoded)
+        if kind == "quiz" and allowed_source_ids is not None:
+            for question in artifact["content"]["questions"]:
+                cited = question.get("source_passage_id")
+                if cited is not None and cited not in allowed_source_ids:
+                    raise StudioGenerationError("Quiz questions must cite a supplied source")
+        return artifact
+    result = _validate_content(kind, decoded)
+    if kind == "flashcards" and allowed_source_ids is not None:
+        _validate_flashcard_sources(result["flashcards"], allowed_source_ids)
+    return result

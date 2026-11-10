@@ -35,53 +35,7 @@ class AlTabariAgent(BaseTafsirAgent):
             "Contextual historical background"
         ]
     
-    async def explain_ayah(self, surah: int, ayah: int, context: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Generate Tafsir explanation using Al-Tabari's methodology.
-        
-        Args:
-            surah: Surah number (1-114)
-            ayah: Ayah number (1-200)
-            context: Additional context information
-            
-        Returns:
-            Dict with explanation, citations, and metadata
-        """
-        
-        # Retrieve classical sources from Al-Tabari's Jami' al-Bayan
-        sources = await self._retrieve_al_tabari_sources(surah, ayah)
-        
-        # Generate explanation based on Al-Tabari's analytical methodology
-        explanation = self._generate_al_tabari_explanation(
-            surah, ayah, context, sources
-        )
-        
-        # Validate citations and evidence
-        validation_result = await self._validate_al_tabari_explanation(explanation, sources)
-        
-        # Classify evidence level
-        evidence_level = self._classify_al_tabari_evidence(explanation, sources)
-        
-        # Compile final response
-        result = {
-            "ayah_id": f"{surah}:{ayah}",
-            "agent_type": self.agent_type,
-            "scholar_name": self.scholar_name,
-            "methodology": self.methodology,
-            "explanation": explanation,
-            "citations": sources,
-            "evidence_level": evidence_level,
-            "validation": validation_result,
-            "scholarly_position": self.scholarly_position,
-            "key_features": self.key_features,
-            "retrieval_config": self.retrieval_config,
-            "quality_gates": self.quality_gates,
-            "created_at": datetime.now().isoformat(),
-            "agent_info": self.get_agent_info()
-        }
-        
-        return result
-    
+
     def _retrieve_al_tabari_sources(self, surah: int, ayah: int) -> List[Dict[str, Any]]:
         """
         Retrieve sources from Al-Tabari's Jami' al-Bayan.
@@ -90,60 +44,9 @@ class AlTabariAgent(BaseTafsirAgent):
         """
         
         # Mock data representing Al-Tabari's Jami' al-Bayan
-        mock_sources = [
-            {
-                "source_id": "al_tabari_jami_al_bayan_vol9_p123_section1",
-                "book": "Jami' al-Bayan",
-                "author": "Al-Tabari",
-                "volume": 9,
-                "page": 123,
-                "chapter": "Surah Al-Mulk linguistic analysis",
-                "arabic_text": "إِذْ أَرۡـٰـٔـمِنَ اٰـٔـلَـهِمُ اثۡـنَيۡنَ فَكَذَّبَّوۡهُمَا...",
-                "thai_translation": "เมื่อเราส่งสองคนไปยังพวกเขา และพวกเขาปฏิเสธทั้งสองคน...",
-                "interpretation": "Al-Tabari provides extensive historical context and linguistic analysis...",
-                "hadith_references": [
-                    {
-                        "collection": "Sunan al-Tirmidhi",
-                        "hadith_id": "3156",
-                        "grading": "hasan",
-                        "text": "เรื่องนี้..."
-                    }
-                ],
-                "source_type": "historical_narrative",
-                "verification_status": "verified",
-                "confidence_score": 0.92,
-                "author_authority": "Al-Tabari (d. 923 CE) - Renowned Islamic historian",
-                "license": "Open access - Maktabah Shamela",
-                "created_at": "2023-01-15T09:30:00Z"
-            },
-            {
-                "source_id": "al_tabari_jami_al_bayan_vol9_p123_section2",
-                "book": "Jami' al-Bayan",
-                "author": "Al-Tabari",
-                "volume": 9,
-                "page": 123,
-                "chapter": "Etymology and semantic analysis",
-                "arabic_text": "إِذْ أَرۡـٰـٔـمِنَ اٰـٔـلَـهِمُ اثۡـنَيۡنَ فَكَذَّبَّوۡهُمَا فَعَزَّزَـٰـٔـبِهِـمۡـ...",
-                "thai_translation": "เมื่อเราส่งสองคนไปยังพวกเขา และพวกเขาปฏิเสธทั้งสองคน แล้วเราได้เสริมด้วยคนที่สาม...",
-                "interpretation": "Al-Tabari analyzes the Arabic morphology and semantic implications...",
-                "hadith_references": [
-                    {
-                        "collection": "Musnad Ibn Hanbal",
-                        "hadith_id": "2245",
-                        "grading": "sahih",
-                        "text": "รายงานจาก Ibn Abbas เกี่ยวกับเรื่องราว..."
-                    }
-                ],
-                "source_type": "linguistic_analysis",
-                "verification_status": "source_attributed",
-                "confidence_score": 0.88,
-                "author_authority": "Al-Tabari (d. 923 CE) - Comprehensive historian",
-                "license": "Open access - King Fahd Complex",
-                "created_at": "2023-01-15T10:00:00Z"
-            }
-        ]
-        
-        return mock_sources
+        # Placeholder data removed: no source is returned until real, approved
+        # passages are wired in. Fabricated tafsir/hadith must never be served.
+        return []
     
     def _generate_al_tabari_explanation(
         self, 

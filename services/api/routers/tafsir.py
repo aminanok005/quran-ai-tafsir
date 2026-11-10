@@ -12,6 +12,10 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 from ..config import settings
+from ..services.gemini_http import http_status_for
+from ..services.gemini_provider import GeminiError
+from ..services.gemini_translation import translate_ayah
+from ..services.model_router import ModelRouter
 from ..services.quran_foundation_tafsir import (
     QuranFoundationTafsir,
     QuranFoundationTafsirClient,
@@ -405,6 +409,46 @@ async def _translate_api_passage(
 async def translate_api_passage(surah: int, ayah: int, agent_type: str, request: Request):
     """Translate a live API passage and persist only the generated translation."""
     return await _translate_api_passage(surah, ayah, agent_type, request)
+
+
+@router.post("/gemini-translation", response_model=Dict[str, Any])
+async def gemini_translation(surah: int, ayah: int, agent_type: str, request: Request):
+    """Grounded Arabic-to-Thai translation; Arabic text and sources come from approved passages."""
+    if not (1 <= surah <= 114 and 1 <= ayah <= 200):
+        raise HTTPException(status_code=400, detail="Ayah is out of range")
+    _enforce_translation_rate_limit(request)
+    from . import agents as agents_router
+
+    passages = await agents_router._approved_source_passages(surah, ayah, [agent_type])
+    if not passages:
+        raise HTTPException(
+            status_code=503,
+            detail="No approved, verified Tafsir passages are available for this ayah",
+        )
+    passage = passages[0]
+    sources = [
+        {
+            "source_id": item["passage_id"],
+            "scholar_name": item.get("scholar_name"),
+            "text": item["arabic_text"],
+            "volume": item.get("volume"),
+            "page": item.get("page"),
+        }
+        for item in passages
+    ]
+    try:
+        record = await translate_ayah(
+            ModelRouter(),
+            verse_key=passage["verse_key"],
+            arabic_text=passage["arabic_text"],
+            sources=sources,
+        )
+    except GeminiError as error:
+        raise HTTPException(
+            status_code=http_status_for(error),
+            detail="Translation provider is unavailable",
+        ) from error
+    return {"success": True, "data": record}
 
 
 @router.post("/passages/{passage_id}/translate", response_model=Dict[str, Any])

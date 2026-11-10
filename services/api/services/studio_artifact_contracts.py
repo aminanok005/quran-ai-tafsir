@@ -59,10 +59,21 @@ class _QuizQuestion(_StrictModel):
     )
     answer_index: Annotated[StrictInt, Field(ge=0, le=2)]
     explanation: Annotated[StrictStr, Field(min_length=1, max_length=1000)]
+    source_passage_id: Annotated[StrictStr, Field(min_length=1, max_length=200)] | None = None
 
 
 class _QuizContent(_StrictModel):
     questions: list[_QuizQuestion] = Field(min_length=5, max_length=5)
+
+
+class _Flashcard(_StrictModel):
+    front: Annotated[StrictStr, Field(min_length=1, max_length=300)]
+    back: Annotated[StrictStr, Field(min_length=1, max_length=600)]
+    source_passage_id: Annotated[StrictStr, Field(min_length=1, max_length=200)]
+
+
+class _FlashcardsContent(_StrictModel):
+    cards: list[_Flashcard] = Field(min_length=3, max_length=12)
 
 
 class _InfographicCard(_StrictModel):
@@ -85,7 +96,7 @@ class _ArtifactEnvelope(_StrictModel):
 
 
 def validate_studio_artifact(
-    kind: Literal["audio", "quiz", "infographic"],
+    kind: Literal["audio", "quiz", "infographic", "flashcards"],
     title: object,
     summary: object,
     content: object,
@@ -93,6 +104,7 @@ def validate_studio_artifact(
     content_models = {
         "audio": _AudioContent,
         "quiz": _QuizContent,
+        "flashcards": _FlashcardsContent,
         "infographic": _InfographicContent,
     }
     try:

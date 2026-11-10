@@ -37,10 +37,23 @@ class BaseTafsirAgent(ABC):
             }
         ]
 
-    @abstractmethod
     async def explain_ayah(self, surah: int, ayah: int, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate Tafsir explanation for a specific ayah."""
-        pass
+        """Return this scholar's approved source text verbatim; never generate scholarship."""
+        own = [
+            passage for passage in context.get("source_passages", [])
+            if passage.get("scholar_id") == self.agent_type and passage.get("arabic_text")
+        ]
+        if not own:
+            raise ValueError("No approved source passage for this scholar")
+        passage = own[0]
+        return {
+            "ayah_id": f"{surah}:{ayah}",
+            "agent_type": self.agent_type,
+            "scholar_name": self.scholar_name,
+            "methodology": self.methodology,
+            "explanation": passage["arabic_text"],
+            "citations": [{"passage_id": passage["passage_id"]}],
+        }
 
     async def compare_views(self, surah: int, ayah: int, other_agents: List[str]) -> Dict[str, Any]:
         """Compare scholarly views when a concrete agent implements comparison."""

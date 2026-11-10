@@ -366,6 +366,7 @@ async def create_artifact(
         "tafsir": tafsir_context["text"] if tafsir_context else "",
         "tafsir_source": tafsir_context["title"] if tafsir_context else "",
         "selected_sources": request.selected_sources,
+        "source_ids": ["quran", *([f"tafsir-{tafsir_context['resource_id']}"] if tafsir_context else [])],
     }
     try:
         content = await generate_artifact(
@@ -375,6 +376,7 @@ async def create_artifact(
             model=settings.llm_model,
             base_url=settings.llm_api_base_url,
             wire_api=settings.llm_api_wire_api,
+            allowed_source_ids=set(source_context["source_ids"]),
         )
     except httpx.HTTPStatusError as error:
         status = error.response.status_code

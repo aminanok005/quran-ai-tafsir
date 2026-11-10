@@ -35,55 +35,7 @@ class IbnAshurAgent(BaseTafsirAgent):
             "Structural coherence analysis"
         ]
     
-    async def explain_ayah(self, surah: int, ayah: int, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate Tafsir explanation using Ibn Ashur's rhetorical methodology."""
-        
-        sources = await self.retrieve_sources(surah, ayah, None)
-        
-        explanation = {
-            "source_id": "ibn_ashur_al_tahrir_vol3_p156",
-            "scholar": "Ibn Ashur",
-            "methodology": "contemporary",
-            "arabic_original": "إِذْ أَرْسَلْنَا إِلَيْهِمُ اثْنَيْنِ فَكَذَّبُوهُمَا فَعَزَّزْنَا بِهِمْ",
-            "thai_translation": "เมื่อเราส่งสองคนไปยังพวกเขา และพวกเขาปฏิเสธทั้งสองคน แล้วเราได้เสริมด้วยคนที่สาม",
-            "analysis": (
-                "According to Al-Tahrir wa al-Tanwir (Vol 3, p. 156), Ibn Ashur provides profound rhetorical analysis "
-                "(Balaghah) and explores the Maqasid al-Shariah (higher objectives of Islamic law) in this ayah. "
-                "He examines how the Arabic text structure itself conveys divine wisdom about communication strategies, "
-                "the progressive nature of divine guidance, and the relationship between mercy and justice in revelation. "
-                "Ibn Ashur emphasizes how the Qur'an's linguistic beauty serves its higher purposes of guiding humanity."
-            ),
-            "key_points": [
-                "Arabic rhetoric (Balaghah) analysis",
-                "Maqasid al-Shariah (higher objectives)",
-                "Structural coherence of Qur'an",
-                "Divine communication strategies",
-                "Relationship between mercy and justice",
-                "Rhetorical beauty as a means of guidance"
-            ],
-            "citations": [
-                {
-                    "source_id": "ibn_ashur_al_tahrir_vol3",
-                    "reference": "Al-Tahrir wa al-Tanwir, Vol 3, p. 156",
-                    "excerpt": "โครงสร้างทางภาษาอาหรับที่มีความหมายลึกซึ้งถึงวัตถุประสงค์ของพระเจ้า..."
-                }
-            ],
-            "confidence": 0.93,
-            "scholarly_position": "Rhetorical and Maqasid analysis",
-            "methodology_notes": "Focus on linguistic excellence and higher purposes of Sharia",
-            "limitations": [
-                "Theoretical focus over practical application",
-                "Requires background in Arabic rhetoric"
-            ],
-            "evidence_level": "VERIFIED",
-            "created_at": datetime.now().isoformat()
-        }
-        
-        validation = await self._validate_ibn_ashur_explanation(explanation, sources)
-        explanation["validation"] = validation
-        
-        return explanation
-    
+
     def _retrieve_ibn_ashur_sources(self, surah: int, ayah: int) -> List[Dict[str, Any]]:
         """
         Retrieve sources from Ibn Ashur's Al-Tahrir wa al-Tanwir.
@@ -92,35 +44,9 @@ class IbnAshurAgent(BaseTafsirAgent):
         """
         
         # Mock data representing Ibn Ashur's Al-Tahrir wa al-Tanwir
-        mock_sources = [
-            {
-                "source_id": "ibn_ashur_al_tahrir_vol3_p156",
-                "book": "Al-Tahrir wa al-Tanwir",
-                "author": "Ibn Ashur",
-                "volume": 3,
-                "page": 156,
-                "chapter": "Arabic rhetoric and Maqasid analysis",
-                "arabic_text": "إِذْ أَرْسَلْنَا إِلَيْهِمُ اثْنَيْنِ فَكَذَّبُوهُمَا فَعَزَّزْنَا بِهِمْ",
-                "thai_translation": "เมื่อเราส่งสองคนไปยังพวกเขา และพวกเขาปฏิเสธทั้งสองคน แล้วเราได้เสริมด้วยคนที่สาม",
-                "interpretation": "Ibn Ashur provides profound rhetorical analysis of the Arabic text structure, examining how the linguistic form itself conveys divine wisdom about communication strategies and the relationship between divine mercy and justice.",
-                "hadith_references": [
-                    {
-                        "collection": "Sahih Muslim",
-                        "hadith_id": "2689",
-                        "grading": "sahih",
-                        "text": "เรื่องราวการสื่อสารที่มีความหมายลึกซึ้ง..."
-                    }
-                ],
-                "source_type": "rhetorical_analysis",
-                "verification_status": "verified",
-                "confidence_score": 0.91,
-                "author_authority": "Ibn Ashur (d. 1100 CE) - Renowned scholar of Arabic rhetoric and Maqasid",
-                "license": "Open access - King Fahd Complex",
-                "created_at": "2023-01-15T10:45:00Z"
-            }
-        ]
-        
-        return mock_sources
+        # Placeholder data removed: no source is returned until real, approved
+        # passages are wired in. Fabricated tafsir/hadith must never be served.
+        return []
     
     def _validate_ibn_ashur_explanation(
         self, 

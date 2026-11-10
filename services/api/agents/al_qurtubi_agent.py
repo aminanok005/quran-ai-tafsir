@@ -34,55 +34,7 @@ class AlQurtubiAgent(BaseTafsirAgent):
             "Practical application focus"
         ]
     
-    async def explain_ayah(self, surah: int, ayah: int, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate Tafsir explanation using Al-Qurtubi's legal methodology."""
-        
-        sources = await self.retrieve_sources(surah, ayah, None)
-        
-        explanation = {
-            "source_id": "al_qurtubi_jami_ahkam_vol4_p89",
-            "scholar": "Al-Qurtubi",
-            "methodology": "legal",
-            "arabic_original": "إِذْ أَرْسَلْنَا إِلَيْهِمُ اثْنَيْنِ فَكَذَّبُوهُمَا فَعَزَّزْنَا بِهِمْ",
-            "thai_translation": "เมื่อเราส่งสองคนไปยังพวกเขา และพวกเขาปฏิเสธทั้งสองคน",
-            "analysis": (
-                "According to Al-Jami' li-Ahkam al-Qur'an (Vol 4, p. 89), Al-Qurtubi focuses on the legal deductions "
-                "(Ahkam) found in this ayah. He analyzes the jurisprudential implications regarding divine authority, "
-                "human responsibility, and the consequences of rejecting messengers. This verse establishes key "
-                "legal principles regarding the authority of prophets, the obligation to follow divine guidance, "
-                "and the justice of divine punishment for those who persist in disobedience despite clear warnings."
-            ),
-            "key_points": [
-                "Legal deductions (Ahkam al-Qur'an)",
-                "Comparative Madhhab analysis",
-                "Practical legal rulings",
-                "Divine authority and human responsibility",
-                "Justice of divine punishment",
-                "Obligation to follow prophetic guidance"
-            ],
-            "citations": [
-                {
-                    "source_id": "al_qurtubi_jami_ahkam_vol4",
-                    "reference": "Al-Jami' li-Ahkam al-Qur'an, Vol 4, p. 89",
-                    "excerpt": "กฎหมายเรื่องความรับผิดชอบทางกฎหมายสำหรับผู้ปฏิเสธคำเตือนจากพระเจ้า..."
-                }
-            ],
-            "confidence": 0.95,
-            "scholarly_position": "Legal jurisprudence",
-            "methodology_notes": "Analyzes legal implications and comparative school differences",
-            "limitations": [
-                "Focus on legal aspects over spiritual meaning",
-                "May require additional context for complete understanding"
-            ],
-            "evidence_level": "VERIFIED",
-            "created_at": datetime.now().isoformat()
-        }
-        
-        validation = await self._validate_al_qurtubi_explanation(explanation, sources)
-        explanation["validation"] = validation
-        
-        return explanation
-    
+
     def _retrieve_al_qurtubi_sources(self, surah: int, ayah: int) -> List[Dict[str, Any]]:
         """
         Retrieve sources from Al-Qurtubi's Jami' li-Ahkam al-Qur'an.
@@ -91,60 +43,9 @@ class AlQurtubiAgent(BaseTafsirAgent):
         """
         
         # Mock data representing Al-Qurtubi's Jami' li-Ahkam al-Qur'an
-        mock_sources = [
-            {
-                "source_id": "al_qurtubi_jami_ahkam_vol4_p89",
-                "book": "Al-Jami' li-Ahkam al-Qur'an",
-                "author": "Al-Qurtubi",
-                "volume": 4,
-                "page": 89,
-                "chapter": "Legal rulings from Surah Al-Mulk",
-                "arabic_text": "إِذْ أَرْسَلْنَا إِلَيْهِمُ اثْنَيْنِ فَكَذَّبُوهُمَا فَعَزَّزْنَا بِهِمْ",
-                "thai_translation": "เมื่อเราส่งสองคนไปยังพวกเขา และพวกเขาปฏิเสธทั้งสองคน",
-                "interpretation": "Al-Qurtubi analyzes the legal implications of this verse regarding divine authority and human responsibility",
-                "hadith_references": [
-                    {
-                        "collection": "Sahih Muslim",
-                        "hadith_id": "2597",
-                        "grading": "sahih",
-                        "text": "เรื่องราวเกี่ยวกับการปฏิเสธสิ่งศักดิ์สิทธิ์..."
-                    }
-                ],
-                "source_type": "legal_analysis",
-                "verification_status": "verified",
-                "confidence_score": 0.95,
-                "author_authority": "Al-Qurtubi (d. 1020 CE) - Renowned jurist and jurist",
-                "license": "Open access - King Fahd Complex",
-                "created_at": "2023-01-15T10:15:00Z"
-            },
-            {
-                "source_id": "al_qurtubi_jami_ahkam_vol4_p89_section2",
-                "book": "Al-Jami' li-Ahkam al-Qur'an",
-                "author": "Al-Qurtubi",
-                "volume": 4,
-                "page": 89,
-                "chapter": "Comparative Madhhab analysis",
-                "arabic_text": "وَأَنْزَلْنَا إِلَيْهِمُ اثْنَيْنِ فَكَذَّبُوهُمَا فَعَزَّزْنَا بِهِمْ",
-                "thai_translation": "เมื่อเราส่งสองคนไปยังพวกเขา และพวกเขาปฏิเสธทั้งสองคน",
-                "interpretation": "Al-Qurtubi analyzes the legal implications and compares them with the views of the four major Madhhab schools",
-                "hadith_references": [
-                    {
-                        "collection": "Sunan al-Nasa'i",
-                        "hadith_id": "3052",
-                        "grading": "hasan",
-                        "text": "เรื่องราวเกี่ยวกับการปฏิเสธรูปแบบ..."
-                    }
-                ],
-                "source_type": "comparative_fiqh",
-                "verification_status": "verified",
-                "confidence_score": 0.94,
-                "author_authority": "Al-Qurtubi (d. 1020 CE) - Renowned jurist and jurist",
-                "license": "Open access - King Fahd Complex",
-                "created_at": "2023-01-15T10:30:00Z"
-            }
-        ]
-        
-        return mock_sources
+        # Placeholder data removed: no source is returned until real, approved
+        # passages are wired in. Fabricated tafsir/hadith must never be served.
+        return []
     
     def _validate_al_qurtubi_explanation(
         self, 

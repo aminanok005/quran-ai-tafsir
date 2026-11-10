@@ -71,6 +71,7 @@ export type QuizStudioArtifact = {
       options: [string, string, string];
       answer_index: 0 | 1 | 2;
       explanation: string;
+      source_passage_id?: string;
     }>;
   };
 };
