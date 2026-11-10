@@ -84,3 +84,31 @@ class GroundedAgentTests(unittest.IsolatedAsyncioTestCase):
             1, 1, ["al_tabari"], {}, source_passages=[{**APPROVED, "scholar_id": "ibn_kathir", "arabic_text": "x"}]
         )
         self.assertEqual(result["agents_executed"], [])
+
+
+def _passage(agent, i):
+    return {**APPROVED, "passage_id": f"qf:{i}:1:1", "scholar_id": agent, "arabic_text": f"نص {agent}",
+            "scholar_name": agent, "book_title": f"كتاب {agent}"}
+
+
+class IkhtilafMatrixTests(unittest.IsolatedAsyncioTestCase):
+    async def test_single_scholar_gives_no_comparison(self):
+        o = AgentOrchestratorService()
+        r = await o.execute_agent_analysis(1, 1, ["ibn_kathir"], {}, source_passages=[_passage("ibn_kathir", 1)])
+        self.assertIsNone(r["comparative_analysis"])
+
+    async def test_two_scholars_give_verbatim_matrix_without_inferred_judgements(self):
+        o = AgentOrchestratorService()
+        r = await o.execute_agent_analysis(
+            1, 1, ["ibn_kathir", "al_tabari"], {},
+            source_passages=[_passage("ibn_kathir", 1), _passage("al_tabari", 2)],
+        )
+        m = r["comparative_analysis"]
+        self.assertEqual([row["scholar_id"] for row in m["scholars"]], ["ibn_kathir", "al_tabari"])
+        for row in m["scholars"]:
+            self.assertEqual(row["text"], f"نص {row['scholar_id']}")
+            self.assertEqual(row["evidence_status"], "VERIFIED")
+            self.assertTrue(row["passage_id"].startswith("qf:"))
+        for field in ("agreement", "disagreement", "hadith_evidence", "fiqh_implications"):
+            self.assertEqual(m[field]["status"], "UNVERIFIED")
+        self.assertEqual(m["evidence_status"], "SOURCE-ATTRIBUTED")
