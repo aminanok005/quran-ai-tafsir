@@ -35,53 +35,7 @@ class IbnKathirAgent(BaseTafsirAgent):
             "Tafsir bil-Ma'thur methodology"
         ]
     
-    async def explain_ayah(self, surah: int, ayah: int, context: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Generate Tafsir explanation using Ibn Kathir's methodology.
-        
-        Args:
-            surah: Surah number (1-114)
-            ayah: Ayah number (1-200)
-            context: Additional context information
-            
-        Returns:
-            Dict with explanation, citations, and metadata
-        """
-        
-        # Retrieve classical sources from Ibn Kathir's Tafsir al-Qur'an al-Azim
-        sources = self._retrieve_ibn_kathir_sources(surah, ayah)
-        
-        # Generate explanation based on ma'thur methodology
-        explanation = self._generate_ibn_kathir_explanation(
-            surah, ayah, context, sources
-        )
-        
-        # Validate citations and evidence
-        validation_result = self._validate_ibn_kathir_explanation(explanation, sources)
-        
-        # Classify evidence level
-        evidence_level = self._classify_ibn_kathir_evidence(explanation, sources)
-        
-        # Compile final response
-        result = {
-            "ayah_id": f"{surah}:{ayah}",
-            "agent_type": self.agent_type,
-            "scholar_name": self.scholar_name,
-            "methodology": self.methodology,
-            "explanation": explanation,
-            "citations": sources,
-            "evidence_level": evidence_level,
-            "validation": validation_result,
-            "scholarly_position": self.scholarly_position,
-            "key_features": self.key_features,
-            "retrieval_config": self.retrieval_config,
-            "quality_gates": self.quality_gates,
-            "created_at": datetime.now().isoformat(),
-            "agent_info": self.get_agent_info()
-        }
-        
-        return result
-    
+
     def _retrieve_ibn_kathir_sources(self, surah: int, ayah: int) -> List[Dict[str, Any]]:
         """
         Retrieve sources from Ibn Kathir's Tafsir al-Qur'an al-Azim.

@@ -42,18 +42,6 @@ class LegacyAgentEvidenceSafetyTests(unittest.IsolatedAsyncioTestCase):
             )
 
 
-class IbnKathirAgentRegressionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_explain_ayah_does_not_await_sync_source_lookup(self):
-        from services.api.agents.ibn_kathir_agent import IbnKathirAgent
-
-        try:
-            await IbnKathirAgent().explain_ayah(1, 1, {})
-        except TypeError as exc:
-            self.assertNotIn("await", str(exc))
-        except KeyError:
-            pass  # separate legacy mock-data defect, out of scope here
-
-
 class PlaceholderRetrieversReturnNothingTests(unittest.TestCase):
     def test_legacy_retrievers_never_return_placeholder_sources(self):
         from services.api.agents.al_qurtubi_agent import AlQurtubiAgent
@@ -72,3 +60,27 @@ class PlaceholderRetrieversReturnNothingTests(unittest.TestCase):
             (IbnKathirAgent(), "ibn_kathir"),
         ]:
             self.assertEqual(getattr(agent, f"_retrieve_{name}_sources")(1, 1), [], name)
+
+
+class GroundedAgentTests(unittest.IsolatedAsyncioTestCase):
+    async def test_each_agent_returns_only_its_own_approved_passage_verbatim(self):
+        orchestrator = AgentOrchestratorService()
+        passages = [
+            {**APPROVED, "passage_id": f"qf:{i}:1:1", "scholar_id": agent, "arabic_text": f"نص {agent}"}
+            for i, agent in enumerate(orchestrator.agents)
+        ]
+        result = await orchestrator.execute_agent_analysis(
+            1, 1, list(orchestrator.agents), {}, source_passages=passages
+        )
+        self.assertEqual(sorted(result["agents_executed"]), sorted(orchestrator.agents))
+        for agent, output in result["agent_outputs"].items():
+            self.assertEqual(output["explanation"], f"نص {agent}")
+            self.assertEqual(len(output["citations"]), 1)
+            self.assertEqual(output["citations"][0]["evidence_status"], "VERIFIED")
+
+    async def test_agent_without_its_own_passage_fails_closed(self):
+        orchestrator = AgentOrchestratorService()
+        result = await orchestrator.execute_agent_analysis(
+            1, 1, ["al_tabari"], {}, source_passages=[{**APPROVED, "scholar_id": "ibn_kathir", "arabic_text": "x"}]
+        )
+        self.assertEqual(result["agents_executed"], [])

@@ -35,53 +35,7 @@ class AlTabariAgent(BaseTafsirAgent):
             "Contextual historical background"
         ]
     
-    async def explain_ayah(self, surah: int, ayah: int, context: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Generate Tafsir explanation using Al-Tabari's methodology.
-        
-        Args:
-            surah: Surah number (1-114)
-            ayah: Ayah number (1-200)
-            context: Additional context information
-            
-        Returns:
-            Dict with explanation, citations, and metadata
-        """
-        
-        # Retrieve classical sources from Al-Tabari's Jami' al-Bayan
-        sources = self._retrieve_al_tabari_sources(surah, ayah)
-        
-        # Generate explanation based on Al-Tabari's analytical methodology
-        explanation = self._generate_al_tabari_explanation(
-            surah, ayah, context, sources
-        )
-        
-        # Validate citations and evidence
-        validation_result = self._validate_al_tabari_explanation(explanation, sources)
-        
-        # Classify evidence level
-        evidence_level = self._classify_al_tabari_evidence(explanation, sources)
-        
-        # Compile final response
-        result = {
-            "ayah_id": f"{surah}:{ayah}",
-            "agent_type": self.agent_type,
-            "scholar_name": self.scholar_name,
-            "methodology": self.methodology,
-            "explanation": explanation,
-            "citations": sources,
-            "evidence_level": evidence_level,
-            "validation": validation_result,
-            "scholarly_position": self.scholarly_position,
-            "key_features": self.key_features,
-            "retrieval_config": self.retrieval_config,
-            "quality_gates": self.quality_gates,
-            "created_at": datetime.now().isoformat(),
-            "agent_info": self.get_agent_info()
-        }
-        
-        return result
-    
+
     def _retrieve_al_tabari_sources(self, surah: int, ayah: int) -> List[Dict[str, Any]]:
         """
         Retrieve sources from Al-Tabari's Jami' al-Bayan.

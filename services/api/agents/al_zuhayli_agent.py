@@ -34,54 +34,7 @@ class AlZuhayliAgent(BaseTafsirAgent):
             "Contemporary challenges and solutions"
         ]
     
-    async def explain_ayah(self, surah: int, ayah: int, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate Tafsir explanation using Al-Zuhayli's contemporary methodology."""
-        
-        sources = await self.retrieve_sources(surah, ayah, None)
-        
-        explanation = {
-            "source_id": "al_zuhayli_al_tafsir_al_munir_vol5_p234",
-            "scholar": "Wahbah Al-Zuhayli",
-            "methodology": "contemporary",
-            "arabic_original": "إِذْ أَرْسَلْنَا إِلَيْهِمُ اثْنَيْنِ فَكَذَّبُوهُمَا فَعَزَّزْنَا بِهِمْ",
-            "thai_translation": "เมื่อเราส่งสองคนไปยังพวกเขา และพวกเขาปฏิเสธทั้งสองคน แล้วเราได้เสริมด้วยคนที่สาม",
-            "analysis": (
-                "According to Al-Tafsir al-Munir (Vol 5, p. 234), Al-Zuhayli provides contemporary comparative fiqh analysis "
-                "that connects classical Tafsir to modern societal applications. He examines how this ayah's message applies "
-                "to contemporary challenges, addressing issues of religious tolerance, peaceful coexistence, and the role "
-                "of divine guidance in modern societies. Al-Zuhayli emphasizes the universal aspects of this revelation "
-                "and its relevance to current global challenges, connecting classical interpretation with contemporary applications."
-            ),
-            "key_points": [
-                "Contemporary comparative fiqh",
-                "Modern societal applications",
-                "Religious tolerance and coexistence",
-                "Universal message relevance",
-                "Modern challenges and solutions"
-            ],
-            "citations": [
-                {
-                    "source_id": "al_zuhayli_al_tafsir_al_munir_vol5",
-                    "reference": "Al-Tafsir al-Munir, Vol 5, p. 234",
-                    "excerpt": "บทเรียนนี้สอนให้เรารู้ถึงความสำคัญในสังคมยุคใหม่..."
-                }
-            ],
-            "confidence": 0.89,
-            "scholarly_position": "Contemporary comparative jurisprudence",
-            "methodology_notes": "Focus on modern applications and comparative analysis",
-            "limitations": [
-                "May require additional classical context",
-                "Modern bias potential"
-            ],
-            "evidence_level": "SOURCE-ATTRIBUTED",
-            "created_at": datetime.now().isoformat()
-        }
-        
-        validation = self._validate_al_zuhayli_explanation(explanation, sources)
-        explanation["validation"] = validation
-        
-        return explanation
-    
+
     def _retrieve_al_zuhayli_sources(self, surah: int, ayah: int) -> List[Dict[str, Any]]:
         """
         Retrieve sources from Al-Zuhayli's Al-Tafsir al-Munir.
