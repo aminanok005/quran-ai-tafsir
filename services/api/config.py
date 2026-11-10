@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     )
 
     # Database
-    database_url: str = Field(..., validation_alias="DATABASE_URL")
+    database_url: str = Field(..., repr=False, validation_alias="DATABASE_URL")
     database_pool_size: int = Field(default=10, validation_alias="DATABASE_POOL_SIZE")
     database_timeout: int = Field(default=30, validation_alias="DATABASE_TIMEOUT")
 
@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     # Quran Foundation API
     quran_api_base_url: str = Field(default="https://apis.quran.foundation", validation_alias="QURAN_API_BASE_URL")
     quran_api_client_id: str = Field(default="REPLACE_WITH_APPROVED_CLIENT_ID", validation_alias="QURAN_API_CLIENT_ID")
-    quran_api_client_secret: str = Field(default="REPLACE_WITH_SECRET", validation_alias="QURAN_API_CLIENT_SECRET")
+    quran_api_client_secret: str = Field(default="REPLACE_WITH_SECRET", repr=False, validation_alias="QURAN_API_CLIENT_SECRET")
     quran_api_token_cache_ttl: int = Field(default=3300, validation_alias="QURAN_API_TOKEN_CACHE_TTL_SECONDS")
     quran_api_tafsir_cache_ttl: int = Field(
         default=300,
@@ -68,8 +68,8 @@ class Settings(BaseSettings):
 
     # AI Configuration
     llm_provider: Optional[str] = Field(default=None, validation_alias="LLM_PROVIDER")
-    llm_api_key: Optional[str] = Field(default=None, validation_alias="LLM_API_KEY")
-    openai_api_key: Optional[str] = Field(default=None, validation_alias="OPENAI_API_KEY")
+    llm_api_key: Optional[str] = Field(default=None, repr=False, validation_alias="LLM_API_KEY")
+    openai_api_key: Optional[str] = Field(default=None, repr=False, validation_alias="OPENAI_API_KEY")
     llm_api_base_url: Optional[str] = Field(default=None, validation_alias="LLM_API_BASE_URL")
     llm_api_wire_api: Literal["chat_completions", "responses"] = Field(
         default="chat_completions",
@@ -81,7 +81,7 @@ class Settings(BaseSettings):
 
     # Text-to-speech settings are deliberately independent from LLM credentials and models.
     tts_enabled: bool = Field(default=False, validation_alias="TTS_ENABLED")
-    tts_api_key: Optional[str] = Field(default=None, validation_alias="TTS_API_KEY")
+    tts_api_key: Optional[str] = Field(default=None, repr=False, validation_alias="TTS_API_KEY")
     tts_model: Optional[str] = Field(default=None, validation_alias="TTS_MODEL")
     tts_api_base_url: Optional[str] = Field(default=None, validation_alias="TTS_API_BASE_URL")
     tts_allowed_editions: Annotated[List[str], NoDecode] = Field(
@@ -189,7 +189,7 @@ class Settings(BaseSettings):
         return self.openai_api_key
 
     # Gemini provider (server-side only; separate from embedding credentials)
-    gemini_api_key: Optional[str] = Field(default=None, validation_alias="GEMINI_API_KEY")
+    gemini_api_key: Optional[str] = Field(default=None, repr=False, validation_alias="GEMINI_API_KEY")
     gemini_api_base_url: str = Field(
         default="https://generativelanguage.googleapis.com/v1beta/openai",
         validation_alias="GEMINI_API_BASE_URL",
@@ -210,7 +210,7 @@ class Settings(BaseSettings):
     # Embedding Configuration
     embedding_provider: Optional[str] = Field(default=None, validation_alias="EMBEDDING_PROVIDER")
     embedding_model: Optional[str] = Field(default=None, validation_alias="EMBEDDING_MODEL")
-    embedding_api_key: Optional[str] = Field(default=None, validation_alias="EMBEDDING_API_KEY")
+    embedding_api_key: Optional[str] = Field(default=None, repr=False, validation_alias="EMBEDDING_API_KEY")
     embedding_api_base_url: Optional[str] = Field(
         default=None,
         validation_alias="EMBEDDING_API_BASE_URL",
@@ -232,11 +232,11 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="STRAPI_API_BASE_URL",
     )
-    strapi_api_token: Optional[str] = Field(default=None, validation_alias="STRAPI_API_TOKEN")
+    strapi_api_token: Optional[str] = Field(default=None, repr=False, validation_alias="STRAPI_API_TOKEN")
 
     # Security
-    secret_key: str = Field(default="GENERATE_A_LONG_RANDOM_SECRET", validation_alias="SECRET_KEY")
-    jwt_secret: str = Field(default="GENERATE_A_LONG_RANDOM_SECRET", validation_alias="JWT_SECRET")
+    secret_key: str = Field(default="GENERATE_A_LONG_RANDOM_SECRET", repr=False, validation_alias="SECRET_KEY")
+    jwt_secret: str = Field(default="GENERATE_A_LONG_RANDOM_SECRET", repr=False, validation_alias="JWT_SECRET")
     jwt_algorithm: str = Field(default="HS256", validation_alias="JWT_ALGORITHM")
     jwt_expire_minutes: int = Field(default=60, validation_alias="JWT_EXPIRE_MINUTES")
 
