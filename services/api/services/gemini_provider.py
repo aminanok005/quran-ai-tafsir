@@ -25,6 +25,7 @@ class GeminiErrorKind(str, Enum):
     SERVER = "server"
     BAD_REQUEST = "bad_request"
     MALFORMED = "malformed_response"
+    TRUNCATED = "truncated"
 
 
 class GeminiError(RuntimeError):
@@ -139,11 +140,13 @@ class GeminiProvider:
 
     def _parse(self, model: str, body: Any, json_output: bool) -> GeminiResult:
         try:
-            text = body["choices"][0]["message"]["content"]
+            text = body["choices"][0]["message"].get("content")
         except (KeyError, IndexError, TypeError) as error:
             raise GeminiError(GeminiErrorKind.MALFORMED) from error
         if not isinstance(text, str) or not text.strip():
-            raise GeminiError(GeminiErrorKind.MALFORMED)
+            finish = body["choices"][0].get("finish_reason") if isinstance(body, dict) else None
+            kind = GeminiErrorKind.TRUNCATED if finish == "length" else GeminiErrorKind.MALFORMED
+            raise GeminiError(kind)
         raw = body.get("usage") if isinstance(body, dict) else None
         raw = raw if isinstance(raw, dict) else {}
         prompt = int(raw.get("prompt_tokens") or 0)
