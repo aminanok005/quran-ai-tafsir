@@ -34,6 +34,7 @@ _studio_requests: dict[UUID, list[float]] = {}
 _STUDIO_LIMIT = 5
 _STUDIO_WINDOW_SECONDS = 60
 _LOCAL_LLM_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+_GEMINI_API_HOST = "generativelanguage.googleapis.com"
 
 ArtifactKind = Literal[
     "audio",
@@ -64,9 +65,10 @@ def _is_loopback_provider_url(value: str) -> bool:
         _ = parsed.port
     except ValueError:
         return False
+    is_local = parsed.scheme in {"http", "https"} and parsed.hostname in _LOCAL_LLM_HOSTS
+    is_gemini = parsed.scheme == "https" and parsed.hostname == _GEMINI_API_HOST
     return (
-        parsed.scheme in {"http", "https"}
-        and parsed.hostname in _LOCAL_LLM_HOSTS
+        (is_local or is_gemini)
         and parsed.username is None
         and parsed.password is None
         and not parsed.query
@@ -278,7 +280,7 @@ async def create_artifact(
     if not _is_loopback_provider_url(settings.llm_api_base_url):
         raise HTTPException(
             status_code=503,
-            detail="LLM_API_BASE_URL must use a valid loopback host for local Studio generation",
+            detail="LLM_API_BASE_URL must use a loopback host or the Google Gemini API host",
         )
     if len(request.arabic_text) + len(request.translation) > 16000:
         raise HTTPException(status_code=413, detail="Selected source context is too long")
