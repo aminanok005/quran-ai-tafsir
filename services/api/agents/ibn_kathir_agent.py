@@ -49,7 +49,7 @@ class IbnKathirAgent(BaseTafsirAgent):
         """
         
         # Retrieve classical sources from Ibn Kathir's Tafsir al-Qur'an al-Azim
-        sources = await self._retrieve_ibn_kathir_sources(surah, ayah)
+        sources = self._retrieve_ibn_kathir_sources(surah, ayah)
         
         # Generate explanation based on ma'thur methodology
         explanation = self._generate_ibn_kathir_explanation(

@@ -188,6 +188,25 @@ class Settings(BaseSettings):
                 return None
         return self.openai_api_key
 
+    # Gemini provider (server-side only; separate from embedding credentials)
+    gemini_api_key: Optional[str] = Field(default=None, validation_alias="GEMINI_API_KEY")
+    gemini_api_base_url: str = Field(
+        default="https://generativelanguage.googleapis.com/v1beta/openai",
+        validation_alias="GEMINI_API_BASE_URL",
+    )
+    primary_model: Optional[str] = Field(default=None, validation_alias="PRIMARY_MODEL")
+    reasoning_model: Optional[str] = Field(default=None, validation_alias="REASONING_MODEL")
+    fast_model: Optional[str] = Field(default=None, validation_alias="FAST_MODEL")
+    fallback_model: Optional[str] = Field(default=None, validation_alias="FALLBACK_MODEL")
+    gemini_timeout_seconds: float = Field(default=60.0, gt=0, le=300, validation_alias="GEMINI_TIMEOUT_SECONDS")
+    gemini_max_retries: int = Field(default=2, ge=0, le=5, validation_alias="GEMINI_MAX_RETRIES")
+    gemini_max_concurrency: int = Field(default=4, ge=1, le=16, validation_alias="GEMINI_MAX_CONCURRENCY")
+    gemini_json_mode: bool = Field(default=False, validation_alias="GEMINI_JSON_MODE")
+    gemini_model_prices: Dict[str, Dict[str, float]] = Field(
+        default_factory=dict,
+        validation_alias="GEMINI_MODEL_PRICES",
+    )
+
     # Embedding Configuration
     embedding_provider: Optional[str] = Field(default=None, validation_alias="EMBEDDING_PROVIDER")
     embedding_model: Optional[str] = Field(default=None, validation_alias="EMBEDDING_MODEL")

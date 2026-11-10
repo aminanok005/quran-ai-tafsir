@@ -93,7 +93,7 @@ function validateQuizContent(content: unknown): ContentValidation<QuizStudioArti
   for (const rawQuestion of content.questions) {
     if (
       !isRecord(rawQuestion)
-      || !hasOnlyKeys(rawQuestion, ['question', 'options', 'answer_index', 'explanation'])
+      || !hasOnlyKeys(rawQuestion, ['question', 'options', 'answer_index', 'explanation'], ['source_passage_id'])
       || !Array.isArray(rawQuestion.options)
       || rawQuestion.options.length !== 3
     ) {
@@ -104,6 +104,13 @@ function validateQuizContent(content: unknown): ContentValidation<QuizStudioArti
     const explanation = normalizedText(rawQuestion.explanation, 1, 1000);
     if (question === null || explanation === null) {
       return invalidContent('Quiz prompts must be 1-500 characters and explanations 1-1,000 characters');
+    }
+
+    const sourcePassageId = rawQuestion.source_passage_id === undefined
+      ? undefined
+      : normalizedText(rawQuestion.source_passage_id, 1, 200);
+    if (sourcePassageId === null) {
+      return invalidContent('Quiz source references must be 1-200 characters');
     }
 
     const optionValues: string[] = [];
@@ -126,7 +133,13 @@ function validateQuizContent(content: unknown): ContentValidation<QuizStudioArti
     const options: [string, string, string] = [optionValues[0], optionValues[1], optionValues[2]];
     const answerIndex: 0 | 1 | 2 =
       rawQuestion.answer_index === 0 ? 0 : rawQuestion.answer_index === 1 ? 1 : 2;
-    questions.push({ question, options, answer_index: answerIndex, explanation });
+    questions.push({
+      question,
+      options,
+      answer_index: answerIndex,
+      explanation,
+      ...(sourcePassageId !== undefined ? { source_passage_id: sourcePassageId } : {}),
+    });
   }
 
   return { valid: true, content: { questions } };

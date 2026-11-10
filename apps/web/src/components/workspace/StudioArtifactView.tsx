@@ -156,6 +156,9 @@ function QuizArtifact({
                   {isCorrect ? 'Correct' : 'Not quite'}
                 </p>
                 <p className="text-xs leading-5 text-slate-500">{question.explanation}</p>
+                {question.source_passage_id && (
+                  <p className="text-[10px] text-slate-400">Source: {question.source_passage_id}</p>
+                )}
               </div>
             )}
           </section>
