@@ -149,6 +149,7 @@ class TranslationAudioService:
         self.settings = settings
         self.redis_client = redis_client
         self.http_client = http_client or httpx.AsyncClient()
+        self._source_cache: dict[tuple[int, str], tuple[float, dict[int, str]]] = {}
         self.cache = cache or AudioCache(
             ttl_seconds=settings.tts_cache_ttl_seconds,
             max_bytes=settings.tts_cache_max_bytes,
@@ -234,6 +235,10 @@ class TranslationAudioService:
             raise HTTPException(status_code=429, detail="Translation audio request limit reached")
 
     async def _resolve_translation(self, surah: int, ayah: int, edition: str) -> str:
+        cached = self._source_cache.get((surah, edition))
+        if cached is not None and cached[0] > time.monotonic():
+            return self._pick_ayah(cached[1], ayah)
+        self._source_cache.pop((surah, edition), None)
         url = QURAN_CLOUD_URL.format(surah=surah, edition=edition)
         deadline = asyncio.timeout(self.settings.tts_timeout_seconds)
 
@@ -302,23 +307,20 @@ class TranslationAudioService:
             or not isinstance(ayahs, list)
         ):
             raise HTTPException(status_code=502, detail="Invalid translation source response")
-        source_ayah = next(
-            (
-                item
-                for item in ayahs
-                if isinstance(item, dict)
-                and isinstance(item.get("numberInSurah"), int)
-                and not isinstance(item.get("numberInSurah"), bool)
-                and item.get("numberInSurah") == ayah
-            ),
-            None,
-        )
-        text = source_ayah.get("text") if source_ayah else None
-        if (
-            not isinstance(text, str)
-            or not text.strip()
-            or len(text) > self.settings.tts_max_text_chars
-        ):
+        by_ayah: dict[int, str] = {}
+        for item in ayahs:
+            number = item.get("numberInSurah") if isinstance(item, dict) else None
+            text = item.get("text") if isinstance(item, dict) else None
+            if isinstance(number, int) and not isinstance(number, bool) and number not in by_ayah:
+                by_ayah[number] = text if isinstance(text, str) else ""
+        if len(self._source_cache) >= 64:
+            self._source_cache.clear()
+        self._source_cache[(surah, edition)] = (time.monotonic() + 3600, by_ayah)
+        return self._pick_ayah(by_ayah, ayah)
+
+    def _pick_ayah(self, by_ayah: dict[int, str], ayah: int) -> str:
+        text = by_ayah.get(ayah)
+        if not text or not text.strip() or len(text) > self.settings.tts_max_text_chars:
             raise HTTPException(status_code=502, detail="Invalid translation source response")
         return text
 

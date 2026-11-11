@@ -522,6 +522,48 @@ describe("Reader audio playback coordinator", () => {
     expect(onStatus).toHaveBeenCalledWith("อ่านต่อเนื่องครบซูเราะฮ์แล้ว");
   });
 
+  it("prefetches the next ayah's generated audio while the current one plays", async () => {
+    const { audio, controller, loadGeneratedTranslationAudio, revokeGeneratedAudioUrl } = setup();
+    loadGeneratedTranslationAudio.mockImplementation(async (_s, ayah) => ({
+      url: `blob:t-${ayah}`,
+      cacheStatus: "unknown",
+    }));
+    const task = controller.startAuto({
+      ...options("translation"),
+      translationVoiceEngine: "ai",
+    });
+    for (let i = 0; i < 6; i += 1) await Promise.resolve();
+
+    expect(audio.src).toBe("blob:t-1");
+    expect(loadGeneratedTranslationAudio.mock.calls.map((c) => c[1])).toEqual([1, 2]);
+    audio.finish();
+    for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    expect(audio.src).toBe("blob:t-2");
+    audio.finish();
+    await task;
+    expect(loadGeneratedTranslationAudio).toHaveBeenCalledTimes(2);
+    expect(revokeGeneratedAudioUrl.mock.calls.map(([u]) => u)).toEqual(["blob:t-1", "blob:t-2"]);
+  });
+
+  it("revokes an unused prefetched URL when playback is stopped", async () => {
+    const { audio, controller, loadGeneratedTranslationAudio, revokeGeneratedAudioUrl } = setup();
+    loadGeneratedTranslationAudio.mockImplementation(async (_s, ayah) => ({
+      url: `blob:t-${ayah}`,
+      cacheStatus: "unknown",
+    }));
+    const task = controller.startAuto({
+      ...options("translation"),
+      translationVoiceEngine: "ai",
+    });
+    for (let i = 0; i < 6; i += 1) await Promise.resolve();
+    expect(audio.src).toBe("blob:t-1");
+    controller.stop();
+    await task;
+    for (let i = 0; i < 4; i += 1) await Promise.resolve();
+
+    expect(revokeGeneratedAudioUrl.mock.calls.map(([u]) => u).sort()).toEqual(["blob:t-1", "blob:t-2"]);
+  });
+
   it("reports generated-audio play rejection without advancing or falling back to device speech", async () => {
     const {
       audio,
@@ -814,7 +856,8 @@ describe("Reader audio playback coordinator", () => {
     await task;
 
     expect(revokeGeneratedAudioUrl).toHaveBeenCalledWith("blob:translation");
-    expect(revokeGeneratedAudioUrl).toHaveBeenCalledTimes(1);
+    // active URL plus the prefetched next-ayah URL, each exactly once
+    expect(revokeGeneratedAudioUrl).toHaveBeenCalledTimes(2);
     expect(onAyahChange).not.toHaveBeenCalled();
   });
 });

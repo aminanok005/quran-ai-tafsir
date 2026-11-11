@@ -938,3 +938,33 @@ async def test_translation_audio_dependency_is_unavailable_outside_lifespan():
         service = getattr(isolated_app.state, "translation_audio_service", None)
         if service is not None:
             await service.aclose()
+
+
+@pytest.mark.anyio
+async def test_surah_source_is_fetched_once_for_consecutive_ayahs():
+    source_calls = []
+
+    async def source(request):
+        source_calls.append(str(request.url))
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "number": 1,
+                    "edition": {"identifier": "th.thai"},
+                    "ayahs": [
+                        {"numberInSurah": 1, "text": "หนึ่ง"},
+                        {"numberInSurah": 2, "text": "สอง"},
+                    ],
+                }
+            },
+        )
+
+    service = service_for(source_handler=source)
+    await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
+    await service.synthesize(1, 2, "th.thai", 1.0, "192.0.2.3")
+    assert len(source_calls) == 1
+    with pytest.raises(HTTPException) as missing:
+        await service.synthesize(1, 3, "th.thai", 1.0, "192.0.2.3")
+    assert missing.value.status_code == 502
+    await service.aclose()
