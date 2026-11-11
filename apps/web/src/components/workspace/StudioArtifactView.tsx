@@ -5,6 +5,7 @@ import type {
   InfographicLayoutHint,
   TargetStudioArtifactData,
 } from '../../lib/api/client';
+import { getQuizHistory, recordQuizResult } from '../../lib/quiz-progress';
 
 function AudioArtifact({
   data,
@@ -104,11 +105,25 @@ function QuizArtifact({
     0,
   );
   const answeredCount = Object.keys(answers).length;
+  const [best, setBest] = useState<number | null>(null);
+  const progressKey = JSON.stringify(questions.map((question) => question.question));
+
+  useEffect(() => {
+    setBest(getQuizHistory(window.localStorage, progressKey).best);
+  }, [progressKey]);
+
+  useEffect(() => {
+    if (questions.length === 0 || answeredCount !== questions.length) return;
+    recordQuizResult(window.localStorage, progressKey, { score, total: questions.length });
+    setBest(getQuizHistory(window.localStorage, progressKey).best);
+    // Record once per completed round; score is final when every question is answered.
+  }, [answeredCount]);
 
   return (
     <section aria-label="Quiz" className="space-y-3">
       <p data-testid="quiz-progress" className="text-xs font-medium text-slate-500" aria-live="polite">
         Answered: {answeredCount} / {questions.length} · Score: {score} / {questions.length}
+        {best !== null && ` · Best: ${best} / ${questions.length}`}
       </p>
       {questions.map((question, questionIndex) => {
         const selectedAnswer = answers[questionIndex];
