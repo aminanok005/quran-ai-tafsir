@@ -135,6 +135,13 @@ class Settings(BaseSettings):
         le=86400,
         validation_alias="TTS_CACHE_TTL_SECONDS",
     )
+    tts_disk_cache_dir: Optional[str] = Field(default=None, validation_alias="TTS_DISK_CACHE_DIR")
+    tts_disk_cache_max_bytes: int = Field(
+        default=2000000000,
+        ge=1,
+        le=100000000000,
+        validation_alias="TTS_DISK_CACHE_MAX_BYTES",
+    )
     tts_rate_limit_per_minute: int = Field(
         default=30,
         ge=1,

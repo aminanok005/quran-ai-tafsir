@@ -5,10 +5,12 @@ import base64
 import hashlib
 import json
 import logging
+import os
 import shutil
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlsplit
 from typing import Callable
 
@@ -74,6 +76,71 @@ async def compress_wav_to_mp3(wav: bytes, *, bitrate: str = "48k") -> bytes:
 class AudioResult:
     audio: bytes
     cached: bool
+
+
+class DiskAudioStore:
+    """Durable audio store keyed by the content hash, so identical requests never re-bill."""
+
+    def __init__(self, directory: str, max_bytes: int = 2_000_000_000):
+        self.root = Path(directory)
+        self.max_bytes = max_bytes
+        self._last_ns = 0
+
+    def _path(self, key: str) -> Path:
+        return self.root / key[:2] / f"{key}.audio"
+
+    def _stamp(self) -> int:
+        self._last_ns = max(time.time_ns(), self._last_ns + 1)
+        return self._last_ns
+
+    @staticmethod
+    def _valid(audio: bytes) -> bool:
+        return TranslationAudioService._is_wav_audio(audio) or TranslationAudioService._is_mpeg_audio(audio)
+
+    def get(self, key: str) -> bytes | None:
+        path = self._path(key)
+        try:
+            audio = path.read_bytes()
+        except OSError:
+            return None
+        if not self._valid(audio):
+            path.unlink(missing_ok=True)
+            return None
+        try:
+            stamp = self._stamp()
+            os.utime(path, ns=(stamp, stamp))
+        except OSError:
+            pass
+        return audio
+
+    def set(self, key: str, audio: bytes) -> None:
+        path = self._path(key)
+        temp = path.with_suffix(f".{os.getpid()}.tmp")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temp.write_bytes(audio)
+            os.replace(temp, path)
+            stamp = self._stamp()
+            os.utime(path, ns=(stamp, stamp))
+            self._evict()
+        except OSError as error:
+            logger.warning("Audio disk store write failed (%s)", type(error).__name__)
+            temp.unlink(missing_ok=True)
+
+    def _evict(self) -> None:
+        files = []
+        for path in self.root.glob("*/*.audio"):
+            try:
+                info = path.stat()
+            except OSError:
+                continue
+            files.append((info.st_mtime_ns, info.st_size, path))
+        total = sum(size for _, size, _ in files)
+        for _, size, path in sorted(files):
+            if total <= self.max_bytes:
+                break
+            path.unlink(missing_ok=True)
+            total -= size
 
 
 class AudioCache:
@@ -177,6 +244,11 @@ class TranslationAudioService:
         self._model_cooldowns: dict[str, float] = {}
         self.redis_client = redis_client
         self.http_client = http_client or httpx.AsyncClient()
+        self.disk_store = (
+            DiskAudioStore(settings.tts_disk_cache_dir, settings.tts_disk_cache_max_bytes)
+            if settings.tts_disk_cache_dir
+            else None
+        )
         self._source_cache: dict[tuple[int, str], tuple[float, dict[int, str]]] = {}
         self.cache = cache or AudioCache(
             ttl_seconds=settings.tts_cache_ttl_seconds,
@@ -523,8 +595,16 @@ class TranslationAudioService:
         audio = self.cache.get(edition, surah, ayah, source_text, model, voice, speed)
         if audio is not None:
             return AudioResult(audio=audio, cached=True)
+        disk_key = AudioCache._key(edition, surah, ayah, source_text, model, voice, speed)
+        if self.disk_store is not None:
+            audio = await asyncio.to_thread(self.disk_store.get, disk_key)
+            if audio is not None:
+                self.cache.set(edition, surah, ayah, source_text, model, voice, speed, audio)
+                return AudioResult(audio=audio, cached=True)
         audio = await self._request_audio(source_text, voice, speed)
         self.cache.set(edition, surah, ayah, source_text, model, voice, speed, audio)
+        if self.disk_store is not None:
+            await asyncio.to_thread(self.disk_store.set, disk_key, audio)
         return AudioResult(audio=audio, cached=False)
 
     async def aclose(self) -> None:
