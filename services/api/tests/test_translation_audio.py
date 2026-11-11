@@ -1215,3 +1215,40 @@ def test_disk_store_evicts_oldest_when_over_budget(tmp_path):
     store.set("b" * 64, audio)
     assert store.get("a" * 64) is None
     assert store.get("b" * 64) == audio
+
+
+@pytest.mark.anyio
+async def test_gemini_raw_pcm_reply_is_wrapped_as_wav():
+    import base64
+
+    pcm = b"\x01\x02" * 100
+
+    async def provider(request):
+        return httpx.Response(
+            200,
+            json={"candidates": [{"content": {"parts": [{"inlineData": {
+                "mimeType": "audio/l16; rate=24000; channels=1",
+                "data": base64.b64encode(pcm).decode()}}]}}]},
+        )
+
+    async def source(request):
+        return httpx.Response(200, json=valid_source_response())
+
+    service = service_for(
+        source_handler=source,
+        provider_handler=provider,
+        settings=enabled_settings(TTS_API_BASE_URL=GEMINI_BASE),
+    )
+    result = await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
+    assert result.audio[:4] in (b"RIFF", b"ID3\x04") or result.audio[0] == 0xFF
+    await service.aclose()
+
+
+def test_pcm_wrapper_builds_valid_wav_header():
+    import wave, io
+    from services.api.services.translation_audio import pcm_to_wav
+
+    wav = pcm_to_wav(b"\x00\x01" * 240, 24000)
+    with wave.open(io.BytesIO(wav)) as handle:
+        assert (handle.getnchannels(), handle.getsampwidth(), handle.getframerate()) == (1, 2, 24000)
+        assert handle.getnframes() == 240
