@@ -1066,3 +1066,98 @@ async def test_native_gemini_tts_rate_limit_is_reported_as_429():
     assert error.value.status_code == 429
     assert "quota" in error.value.detail.lower()
     await service.aclose()
+
+
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+
+def gemini_audio_reply():
+    import base64
+
+    return httpx.Response(
+        200,
+        json={"candidates": [{"content": {"parts": [{"inlineData": {
+            "mimeType": "audio/wav", "data": base64.b64encode(WAV_BYTES).decode()}}]}}]},
+    )
+
+
+def fallback_service(provider, clock=None):
+    async def source(request):
+        return httpx.Response(200, json=valid_source_response())
+
+    service = service_for(
+        source_handler=source,
+        provider_handler=provider,
+        settings=enabled_settings(
+            TTS_API_BASE_URL=GEMINI_BASE,
+            TTS_MODEL="primary-tts",
+            TTS_FALLBACK_MODELS="backup-tts,last-tts",
+            TTS_MODEL_COOLDOWN_SECONDS=300,
+        ),
+    )
+    if clock:
+        service._clock = clock
+    return service
+
+
+@pytest.mark.anyio
+async def test_quota_error_falls_back_to_next_model_and_returns_audio():
+    seen = []
+
+    async def provider(request):
+        seen.append(str(request.url))
+        if "primary-tts" in str(request.url):
+            return httpx.Response(429, json={})
+        return gemini_audio_reply()
+
+    service = fallback_service(provider)
+    result = await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
+    assert result.audio == WAV_BYTES
+    assert [u.split("/models/")[1].split(":")[0] for u in seen] == ["primary-tts", "backup-tts"]
+    await service.aclose()
+
+
+@pytest.mark.anyio
+async def test_rate_limited_model_is_skipped_during_cooldown_then_retried():
+    seen = []
+    now = [1000.0]
+
+    async def provider(request):
+        seen.append(str(request.url).split("/models/")[1].split(":")[0])
+        if "primary-tts" in str(request.url) and now[0] < 1400:
+            return httpx.Response(429, json={})
+        return gemini_audio_reply()
+
+    service = fallback_service(provider, clock=lambda: now[0])
+    await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
+    await service.synthesize(1, 1, "th.thai", 1.1, "192.0.2.3")
+    assert seen == ["primary-tts", "backup-tts", "backup-tts"]
+    now[0] = 1401.0
+    await service.synthesize(1, 1, "th.thai", 1.2, "192.0.2.3")
+    assert seen[-1] == "primary-tts"
+    await service.aclose()
+
+
+@pytest.mark.anyio
+async def test_all_models_exhausted_reports_429():
+    async def provider(request):
+        return httpx.Response(429, json={})
+
+    service = fallback_service(provider)
+    with pytest.raises(HTTPException) as error:
+        await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
+    assert error.value.status_code == 429
+    await service.aclose()
+
+
+@pytest.mark.anyio
+async def test_provider_server_error_also_falls_back():
+    async def provider(request):
+        if "primary-tts" in str(request.url):
+            return httpx.Response(503, json={})
+        return gemini_audio_reply()
+
+    service = fallback_service(provider)
+    result = await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
+    assert result.audio == WAV_BYTES
+    await service.aclose()

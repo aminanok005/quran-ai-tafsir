@@ -89,6 +89,16 @@ class Settings(BaseSettings):
         validation_alias="TTS_ALLOWED_EDITIONS",
     )
     tts_voice_map: Dict[str, str] = Field(default_factory=dict, validation_alias="TTS_VOICE_MAP")
+    tts_fallback_models: Annotated[List[str], NoDecode] = Field(
+        default_factory=list,
+        validation_alias="TTS_FALLBACK_MODELS",
+    )
+    tts_model_cooldown_seconds: float = Field(
+        default=300.0,
+        ge=1,
+        le=86400,
+        validation_alias="TTS_MODEL_COOLDOWN_SECONDS",
+    )
     tts_timeout_seconds: float = Field(
         default=30.0,
         gt=0,
@@ -259,7 +269,7 @@ class Settings(BaseSettings):
         validation_alias="APP_SUPPORTED_LOCALES",
     )
 
-    @field_validator("cors_origins", "supported_languages", "tts_allowed_editions", mode="before")
+    @field_validator("cors_origins", "supported_languages", "tts_allowed_editions", "tts_fallback_models", mode="before")
     @classmethod
     def parse_string_lists(cls, value: Any) -> Any:
         if not isinstance(value, str):

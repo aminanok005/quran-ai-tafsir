@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import time
 from collections import defaultdict
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from ..config import Settings, settings as default_settings
 from .gemini_provider import GeminiError, GeminiProvider, GeminiResult, GeminiErrorKind
@@ -30,8 +31,10 @@ _TIER = {
 
 
 class ModelRouter:
-    def __init__(self, provider: Optional[GeminiProvider] = None, config: Settings = default_settings):
+    def __init__(self, provider: Optional[GeminiProvider] = None, config: Settings = default_settings, clock: Callable[[], float] = time.monotonic):
         self.config = config
+        self._clock = clock
+        self._cooldowns: dict[str, float] = {}
         self.provider = provider or GeminiProvider(config)
         self.usage: dict[str, dict[str, float]] = defaultdict(lambda: {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost": 0.0})
 
@@ -49,11 +52,15 @@ class ModelRouter:
         if not chain:
             raise GeminiError(GeminiErrorKind.CONFIGURATION)
         last: Optional[GeminiError] = None
-        for model in chain:  # each model is tried once; the provider bounds its own retries
+        now = self._clock()
+        ready = [m for m in chain if self._cooldowns.get(m, 0.0) <= now]
+        for model in ready or chain:  # each model is tried once; the provider bounds its own retries
             try:
                 result = await self.provider.generate(model, messages, json_output=json_output, **kwargs)
             except GeminiError as error:
                 last = error
+                if error.kind in {GeminiErrorKind.RATE_LIMIT, GeminiErrorKind.SERVER, GeminiErrorKind.TIMEOUT}:
+                    self._cooldowns[model] = self._clock() + self.config.tts_model_cooldown_seconds
                 if error.kind in {GeminiErrorKind.CONFIGURATION, GeminiErrorKind.AUTHENTICATION}:
                     break
                 continue

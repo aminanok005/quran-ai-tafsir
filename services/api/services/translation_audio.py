@@ -170,8 +170,11 @@ class TranslationAudioService:
         redis_client=None,
         http_client: httpx.AsyncClient | None = None,
         cache: AudioCache | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ):
         self.settings = settings
+        self._clock = clock
+        self._model_cooldowns: dict[str, float] = {}
         self.redis_client = redis_client
         self.http_client = http_client or httpx.AsyncClient()
         self._source_cache: dict[tuple[int, str], tuple[float, dict[int, str]]] = {}
@@ -356,9 +359,17 @@ class TranslationAudioService:
     def _is_gemini_native(self) -> bool:
         return urlsplit(self.settings.tts_api_base_url or "").hostname == GEMINI_HOST
 
-    async def _request_gemini_audio(self, text: str, voice: str) -> bytes:
+    def _model_chain(self) -> list[str]:
         cfg = self.settings
-        endpoint = f"{cfg.tts_api_base_url.rstrip('/')}/models/{cfg.tts_model}:generateContent"
+        now = self._clock()
+        chain = [m for m in dict.fromkeys([cfg.tts_model, *cfg.tts_fallback_models]) if m]
+        ready = [m for m in chain if self._model_cooldowns.get(m, 0.0) <= now]
+        # Every model cooling down: still try them in order rather than fail without a call.
+        return ready or chain
+
+    async def _request_gemini_audio(self, text: str, voice: str, model: str) -> bytes:
+        cfg = self.settings
+        endpoint = f"{cfg.tts_api_base_url.rstrip('/')}/models/{model}:generateContent"
         payload = {
             "contents": [{"parts": [{"text": text}]}],
             "generationConfig": {
@@ -402,12 +413,26 @@ class TranslationAudioService:
             or (audio[0] == 0xFF and audio[1] & 0xE0 == 0xE0)
         )
 
+    async def _request_gemini_with_fallback(self, text: str, voice: str) -> bytes:
+        last: HTTPException | None = None
+        for model in self._model_chain():
+            try:
+                return await self._request_gemini_audio(text, voice, model)
+            except HTTPException as error:
+                if error.status_code not in {429, 502, 503, 504}:
+                    raise
+                self._model_cooldowns[model] = self._clock() + self.settings.tts_model_cooldown_seconds
+                logger.warning("TTS model %s unavailable (HTTP %s); trying next", model, error.status_code)
+                last = error
+        assert last is not None
+        raise last
+
     async def _request_audio(self, text: str, voice: str, speed: float) -> bytes:
         deadline = asyncio.timeout(self.settings.tts_timeout_seconds)
         try:
             async with deadline:
                 if self._is_gemini_native():
-                    return await self._request_gemini_audio(text, voice)
+                    return await self._request_gemini_with_fallback(text, voice)
                 return await self._request_audio_stream(text, voice, speed)
         except TimeoutError as error:
             if not deadline.expired():

@@ -127,3 +127,26 @@ class GeminiTests(unittest.IsolatedAsyncioTestCase):
         from pathlib import Path
         text = (Path(__file__).resolve().parents[3] / "apps/web/.env.example").read_text()
         self.assertNotIn("GEMINI", text.upper())
+
+
+class CooldownTests(unittest.IsolatedAsyncioTestCase):
+    async def test_rate_limited_model_is_skipped_until_cooldown_expires(self):
+        cfg = make_settings(FALLBACK_MODEL="m-fb", GEMINI_MAX_RETRIES="0")
+        calls = []
+        now = [100.0]
+
+        def handler(request):
+            model = json.loads(request.content)["model"]
+            calls.append(model)
+            if model == "m-primary" and now[0] < 500:
+                return httpx.Response(429, json={})
+            return ok("fine")
+
+        router = ModelRouter(provider(cfg, handler), cfg, clock=lambda: now[0])
+        msgs = [{"role": "user", "content": "hi"}]
+        await router.run(Task.TRANSLATION, msgs)
+        await router.run(Task.TRANSLATION, msgs)
+        self.assertEqual(calls, ["m-primary", "m-fb", "m-fb"])
+        now[0] = 500.0
+        await router.run(Task.TRANSLATION, msgs)
+        self.assertEqual(calls[-1], "m-primary")
