@@ -375,6 +375,11 @@ class TranslationAudioService:
             )
             if response.status_code < 200 or response.status_code >= 300:
                 logger.warning("Gemini TTS returned HTTP %s", response.status_code)
+                if response.status_code == 429:
+                    raise HTTPException(
+                        status_code=429,
+                        detail="Audio provider quota or rate limit reached; try again later",
+                    )
                 raise HTTPException(status_code=502, detail="Audio provider request failed")
             parts = response.json()["candidates"][0]["content"]["parts"]
             inline = next((part["inlineData"] for part in parts if "inlineData" in part), None)
