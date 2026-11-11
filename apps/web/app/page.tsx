@@ -30,7 +30,7 @@ import type {
   ReaderAudioVoice,
   ReaderSpeechUtterance,
 } from '../src/lib/quran/reader-audio-playback';
-import { buildTtsSettings, mapLanguageToEdition } from '../src/lib/quran/reader-audio-settings';
+import { buildTtsSettings, mapLanguageToEdition, resolveTranslationVoiceEngine } from '../src/lib/quran/reader-audio-settings';
 import {
   getWorkspaceShortcutAction,
   readWorkspaceLayout,
@@ -447,7 +447,7 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
   const [playbackMode, setPlaybackMode] = useState<ReaderAudioMode>('recitation');
   const [playbackLanguage, setPlaybackLanguage] = useState<ReaderAudioLanguage>('th');
   const [playbackSettingsOpen, setPlaybackSettingsOpen] = useState(false);
-  const [translationVoiceEngine, setTranslationVoiceEngine] = useState<ReaderTranslationVoiceEngine>('device');
+  const [translationVoiceChoice, setTranslationVoiceEngine] = useState<ReaderTranslationVoiceEngine | null>(null);
   const [playbackSpeed, setPlaybackSpeed] = useState<ReaderAudioSpeed>(1);
   const [translationAudioCapabilities, setTranslationAudioCapabilities] = useState<TranslationAudioCapabilities | null>(null);
   const [translationAudioCapabilityError, setTranslationAudioCapabilityError] = useState('');
@@ -867,6 +867,7 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
     translationAudioCapabilityError,
   );
   const aiVoiceAvailable = ttsSettings.aiVoiceAvailable;
+  const translationVoiceEngine = resolveTranslationVoiceEngine(translationVoiceChoice, aiVoiceAvailable);
   const aiVoiceUnavailableReason = ttsSettings.aiVoiceUnavailableReason;
   const playbackOptions = () => ({
     surah,
