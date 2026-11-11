@@ -968,3 +968,79 @@ async def test_surah_source_is_fetched_once_for_consecutive_ayahs():
         await service.synthesize(1, 3, "th.thai", 1.0, "192.0.2.3")
     assert missing.value.status_code == 502
     await service.aclose()
+
+
+WAV_BYTES = b"RIFF\x24\x00\x00\x00WAVE" + b"\x00" * 24
+
+
+@pytest.mark.anyio
+async def test_native_gemini_tts_returns_wav_without_openai_speech_endpoint():
+    import base64
+
+    seen = []
+
+    async def provider(request):
+        seen.append(request)
+        body = json.loads(request.content)
+        assert body["contents"][0]["parts"][0]["text"] == SOURCE_TEXT
+        assert body["generationConfig"]["responseModalities"] == ["AUDIO"]
+        voice = body["generationConfig"]["speechConfig"]["voiceConfig"]["prebuiltVoiceConfig"]
+        assert voice["voiceName"] == "Kore"
+        assert request.headers["x-goog-api-key"] == "tts-secret"
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "inlineData": {
+                                        "mimeType": "audio/wav",
+                                        "data": base64.b64encode(WAV_BYTES).decode(),
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+        )
+
+    async def source(request):
+        return httpx.Response(200, json=valid_source_response())
+
+    service = service_for(
+        source_handler=source,
+        provider_handler=provider,
+        settings=enabled_settings(
+            TTS_API_BASE_URL="https://generativelanguage.googleapis.com/v1beta",
+            TTS_MODEL="gemini-3.8-flash-lite-tts",
+            TTS_VOICE_MAP={"th": "Kore", "en": "Kore", "id": "Kore"},
+        ),
+    )
+    result = await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
+    assert result.audio == WAV_BYTES
+    assert str(seen[0].url).endswith("/models/gemini-3.8-flash-lite-tts:generateContent")
+    await service.aclose()
+
+
+@pytest.mark.anyio
+async def test_native_gemini_tts_rejects_non_audio_reply():
+    async def provider(request):
+        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": "hi"}]}}]})
+
+    async def source(request):
+        return httpx.Response(200, json=valid_source_response())
+
+    service = service_for(
+        source_handler=source,
+        provider_handler=provider,
+        settings=enabled_settings(
+            TTS_API_BASE_URL="https://generativelanguage.googleapis.com/v1beta",
+        ),
+    )
+    with pytest.raises(HTTPException) as error:
+        await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
+    assert error.value.status_code == 502
+    await service.aclose()

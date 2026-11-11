@@ -1,12 +1,14 @@
 """Generate short audio for allowlisted Quran translations."""
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 from typing import Callable
 
 import httpx
@@ -17,6 +19,7 @@ from ..config import Settings, settings
 
 logger = logging.getLogger(__name__)
 
+GEMINI_HOST = "generativelanguage.googleapis.com"
 QURAN_CLOUD_URL = "https://api.alquran.cloud/v1/surah/{surah}/{edition}"
 SUPPORTED_EDITIONS = {
     "th.thai": "th",
@@ -325,6 +328,47 @@ class TranslationAudioService:
         return text
 
     @staticmethod
+    def _is_wav_audio(audio: bytes) -> bool:
+        return len(audio) >= 12 and audio[:4] == b"RIFF" and audio[8:12] == b"WAVE"
+
+    def _is_gemini_native(self) -> bool:
+        return urlsplit(self.settings.tts_api_base_url or "").hostname == GEMINI_HOST
+
+    async def _request_gemini_audio(self, text: str, voice: str) -> bytes:
+        cfg = self.settings
+        endpoint = f"{cfg.tts_api_base_url.rstrip('/')}/models/{cfg.tts_model}:generateContent"
+        payload = {
+            "contents": [{"parts": [{"text": text}]}],
+            "generationConfig": {
+                "responseModalities": ["AUDIO"],
+                "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}},
+            },
+        }
+        try:
+            response = await self.http_client.post(
+                endpoint,
+                json=payload,
+                headers={"x-goog-api-key": cfg.tts_api_key or ""},
+                timeout=cfg.tts_timeout_seconds,
+            )
+            if response.status_code < 200 or response.status_code >= 300:
+                logger.warning("Gemini TTS returned HTTP %s", response.status_code)
+                raise HTTPException(status_code=502, detail="Audio provider request failed")
+            parts = response.json()["candidates"][0]["content"]["parts"]
+            inline = next((part["inlineData"] for part in parts if "inlineData" in part), None)
+            audio = base64.b64decode(inline["data"], validate=True) if inline else b""
+        except HTTPException:
+            raise
+        except httpx.TimeoutException as error:
+            raise HTTPException(status_code=504, detail="Audio generation timed out") from error
+        except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as error:
+            logger.warning("Gemini TTS request failed (%s)", type(error).__name__)
+            raise HTTPException(status_code=502, detail="Could not generate audio") from error
+        if len(audio) > cfg.tts_max_audio_bytes or not self._is_wav_audio(audio):
+            raise HTTPException(status_code=502, detail="Audio provider returned invalid audio")
+        return audio
+
+    @staticmethod
     def _is_mpeg_audio(audio: bytes) -> bool:
         return len(audio) >= 4 and (
             audio.startswith(b"ID3")
@@ -335,6 +379,8 @@ class TranslationAudioService:
         deadline = asyncio.timeout(self.settings.tts_timeout_seconds)
         try:
             async with deadline:
+                if self._is_gemini_native():
+                    return await self._request_gemini_audio(text, voice)
                 return await self._request_audio_stream(text, voice, speed)
         except TimeoutError as error:
             if not deadline.expired():

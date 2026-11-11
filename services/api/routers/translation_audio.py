@@ -43,8 +43,9 @@ async def get_translation_audio(
 ) -> Response:
     client_ip = request.client.host if request.client else "unknown"
     result = await service.synthesize(surah, ayah, edition, speed, client_ip)
+    media_type = "audio/wav" if result.audio[:4] == b"RIFF" else "audio/mpeg"
     return Response(
         content=result.audio,
-        media_type="audio/mpeg",
+        media_type=media_type,
         headers={"X-Audio-Cache": "hit" if result.cached else "miss"},
     )

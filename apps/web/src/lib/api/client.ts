@@ -335,8 +335,8 @@ export class ApiClient {
     }
 
     const contentType = response.headers.get('Content-Type')?.split(';', 1)[0].trim().toLowerCase();
-    if (contentType !== 'audio/mpeg') {
-      throw new Error(`Invalid translation audio content type: ${contentType ?? 'missing'}; expected audio/mpeg`);
+    if (contentType !== 'audio/mpeg' && contentType !== 'audio/wav') {
+      throw new Error(`Invalid translation audio content type: ${contentType ?? 'missing'}; expected audio/mpeg or audio/wav`);
     }
 
     const cacheHeader = response.headers.get('X-Audio-Cache')?.trim().toLowerCase();
