@@ -72,6 +72,71 @@ SEARCH_SQL = text("""
 """)
 
 
+LEXICAL_SQL = text("""
+    SELECT
+        p.id::text AS passage_id,
+        p.surah_number,
+        p.ayah_start,
+        p.ayah_end,
+        p.arabic_text,
+        CASE
+            WHEN sp.permission_status::text = 'approved'
+             AND sp.verification_status::text = 'verified'
+             AND COALESCE(sp.license, b.license) IS NOT NULL
+             AND COALESCE(sp.verification_evidence, b.verification_evidence) IS NOT NULL
+             AND COALESCE(sp.source_url, b.source_url, p.source_url) IS NOT NULL
+            THEN p.thai_translation
+            ELSE NULL
+        END AS thai_translation,
+        p.volume,
+        p.page,
+        p.edition,
+        p.source_url,
+        p.verification_status::text AS evidence_status,
+        b.book_id,
+        b.title AS book_title,
+        s.scholar_id,
+        s.name AS scholar_name,
+        sp.permission_status::text AS permission_status,
+        sp.verification_status::text AS source_verification_status,
+        COALESCE(sp.license, b.license) AS license,
+        COALESCE(sp.source_url, b.source_url, p.source_url) AS source_reference,
+        ts_rank_cd(to_tsvector('arabic', p.arabic_text), plainto_tsquery('arabic', :query_text)) AS similarity
+    FROM tafsir_passages AS p
+    JOIN tafsir_books AS b ON b.id = p.book_id
+    JOIN scholars AS s ON s.id = b.scholar_id
+    JOIN source_permissions AS sp ON sp.source_id = b.book_id
+    WHERE to_tsvector('arabic', p.arabic_text) @@ plainto_tsquery('arabic', :query_text)
+      AND (:surah_number IS NULL OR p.surah_number = :surah_number)
+      AND (:ayah_number IS NULL OR (p.ayah_start <= :ayah_number AND p.ayah_end >= :ayah_number))
+      AND (:scholar_id IS NULL OR s.scholar_id = :scholar_id)
+      AND (
+          (
+              :include_development = TRUE
+              AND sp.permission_status::text = 'development_only'
+              AND sp.verification_status::text = 'unverified'
+              AND b.permission_status::text = 'development_only'
+              AND b.verification_status::text = 'unverified'
+              AND p.verification_status::text = 'unverified'
+          )
+          OR
+          (
+              :include_development = FALSE
+              AND sp.permission_status::text = 'approved'
+              AND sp.verification_status::text = 'verified'
+              AND b.permission_status::text = 'approved'
+              AND b.verification_status::text = 'verified'
+              AND p.verification_status::text IN ('verified', 'source_attributed', 'scholarly_difference')
+              AND COALESCE(sp.license, b.license) IS NOT NULL
+              AND COALESCE(sp.verification_evidence, b.verification_evidence) IS NOT NULL
+              AND COALESCE(sp.source_url, b.source_url, p.source_url) IS NOT NULL
+          )
+      )
+    ORDER BY similarity DESC
+    LIMIT :top_k
+""")
+
+
 def _evidence_label(value: object) -> str:
     normalized = str(value).lower()
     labels = {
@@ -91,22 +156,37 @@ def search_tafsir(
     scholar_id: str | None,
     top_k: int,
     include_development: bool,
+    query_text: str | None = None,
 ) -> list[dict[str, Any]]:
     """Run a parameterized cosine search and return traceable passage records."""
     vector_literal = "[" + ",".join(repr(value) for value in embedding) + "]"
+    params = {
+        "surah_number": surah_number,
+        "ayah_number": ayah_number,
+        "scholar_id": scholar_id,
+        "top_k": top_k,
+        "include_development": include_development,
+    }
+    lexical_rows: list[Any] = []
     with engine.connect() as connection:
         rows = connection.execute(
-            SEARCH_SQL,
-            {
-                "embedding": vector_literal,
-                "surah_number": surah_number,
-                "ayah_number": ayah_number,
-                "scholar_id": scholar_id,
-                "top_k": top_k,
-                "include_development": include_development,
-            },
+            SEARCH_SQL, {**params, "embedding": vector_literal}
         ).mappings().all()
+        if query_text and query_text.strip():
+            lexical_rows = connection.execute(
+                LEXICAL_SQL, {**params, "query_text": query_text.strip()}
+            ).mappings().all()
 
+    return _fuse_rows(rows, lexical_rows, top_k) if lexical_rows else _to_records(rows)
+
+
+def _fuse_rows(rows: Any, lexical_rows: Any, top_k: int) -> list[dict[str, Any]]:
+    return reciprocal_rank_fusion(
+        [_to_records(rows), _to_records(lexical_rows)], top_k=top_k
+    )
+
+
+def _to_records(rows: Any) -> list[dict[str, Any]]:
     return [
         {
             "passage_id": row["passage_id"],
@@ -134,4 +214,22 @@ def search_tafsir(
         for row in rows
     ]
 
-__all__ = ["SEARCH_SQL", "search_tafsir"]
+RRF_K = 60
+
+
+def reciprocal_rank_fusion(
+    ranked_lists: list[list[dict[str, Any]]], *, top_k: int
+) -> list[dict[str, Any]]:
+    """Merge ranked passage lists; rank-based so scores need no calibration."""
+    scores: dict[str, float] = {}
+    records: dict[str, dict[str, Any]] = {}
+    for ranked in ranked_lists:
+        for rank, record in enumerate(ranked, start=1):
+            key = record["passage_id"]
+            scores[key] = scores.get(key, 0.0) + 1.0 / (RRF_K + rank)
+            records.setdefault(key, record)
+    order = sorted(scores, key=lambda key: scores[key], reverse=True)
+    return [records[key] for key in order[:top_k]]
+
+
+__all__ = ["LEXICAL_SQL", "SEARCH_SQL", "reciprocal_rank_fusion", "search_tafsir"]
