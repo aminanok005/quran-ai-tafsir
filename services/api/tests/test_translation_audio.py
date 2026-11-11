@@ -1044,3 +1044,25 @@ async def test_native_gemini_tts_rejects_non_audio_reply():
         await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
     assert error.value.status_code == 502
     await service.aclose()
+
+
+@pytest.mark.anyio
+async def test_native_gemini_tts_rate_limit_is_reported_as_429():
+    async def provider(request):
+        return httpx.Response(429, json={"error": {"status": "RESOURCE_EXHAUSTED"}})
+
+    async def source(request):
+        return httpx.Response(200, json=valid_source_response())
+
+    service = service_for(
+        source_handler=source,
+        provider_handler=provider,
+        settings=enabled_settings(
+            TTS_API_BASE_URL="https://generativelanguage.googleapis.com/v1beta",
+        ),
+    )
+    with pytest.raises(HTTPException) as error:
+        await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
+    assert error.value.status_code == 429
+    assert "quota" in error.value.detail.lower()
+    await service.aclose()
