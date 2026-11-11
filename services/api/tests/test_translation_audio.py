@@ -1161,3 +1161,57 @@ async def test_provider_server_error_also_falls_back():
     result = await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
     assert result.audio == WAV_BYTES
     await service.aclose()
+
+
+@pytest.mark.anyio
+async def test_disk_store_survives_restart_and_skips_provider(tmp_path):
+    calls = []
+
+    async def provider(request):
+        calls.append(1)
+        return provider_success(request)
+
+    async def source(request):
+        return httpx.Response(200, json=valid_source_response())
+
+    def build():
+        return service_for(
+            source_handler=source,
+            provider_handler=provider,
+            settings=enabled_settings(TTS_DISK_CACHE_DIR=str(tmp_path)),
+        )
+
+    first = build()
+    one = await first.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
+    await first.aclose()
+    assert one.cached is False and len(calls) == 1
+
+    second = build()
+    two = await second.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
+    await second.aclose()
+    assert two.cached is True and two.audio == one.audio
+    assert len(calls) == 1
+
+
+@pytest.mark.anyio
+async def test_disk_store_ignores_corrupt_files_and_regenerates(tmp_path):
+    service = service_for(settings=enabled_settings(TTS_DISK_CACHE_DIR=str(tmp_path)))
+    await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
+    for path in tmp_path.rglob("*.audio"):
+        path.write_bytes(b"not audio")
+    fresh = service_for(settings=enabled_settings(TTS_DISK_CACHE_DIR=str(tmp_path)))
+    result = await fresh.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
+    assert result.cached is False
+    await service.aclose()
+    await fresh.aclose()
+
+
+def test_disk_store_evicts_oldest_when_over_budget(tmp_path):
+    from services.api.services.translation_audio import DiskAudioStore
+
+    store = DiskAudioStore(str(tmp_path), max_bytes=20)
+    audio = b"RIFF\x00\x00\x00\x00WAVE"
+    store.set("a" * 64, audio)
+    store.set("b" * 64, audio)
+    assert store.get("a" * 64) is None
+    assert store.get("b" * 64) == audio
