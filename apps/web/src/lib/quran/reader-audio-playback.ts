@@ -85,13 +85,31 @@ function languageVoice(
   );
 }
 
+type GeneratedTranslationAudio = {
+  url: string;
+  cacheStatus: GeneratedTranslationCacheStatus;
+};
+
 export function createReaderAudioPlayback(
   dependencies: ReaderAudioPlaybackDependencies,
 ) {
   let generation = 0;
   let activeRequest: AbortController | null = null;
   let activeGeneratedAudioUrl: string | null = null;
+  let prefetched: {
+    ayah: number;
+    promise: Promise<GeneratedTranslationAudio>;
+  } | null = null;
   const { audio, speech } = dependencies;
+
+  function discardPrefetched(): void {
+    const pending = prefetched;
+    prefetched = null;
+    pending?.promise.then(
+      (generated) => dependencies.revokeGeneratedAudioUrl(generated.url),
+      () => undefined,
+    );
+  }
 
   function releaseActiveGeneratedAudioUrl(): void {
     if (activeGeneratedAudioUrl === null) return;
@@ -109,6 +127,7 @@ export function createReaderAudioPlayback(
     activeRequest?.abort();
     activeRequest = null;
     releaseActiveGeneratedAudioUrl();
+    discardPrefetched();
     audio.onended = null;
     audio.onerror = null;
     audio.pause();
@@ -214,23 +233,31 @@ export function createReaderAudioPlayback(
     ayah: number,
     signal: AbortSignal,
     requestGeneration: number,
+    nextAyah?: number,
   ): Promise<void> {
     const speed = options.speed ?? 1;
     dependencies.onStatus(
       `กำลังขอ/สร้างเสียงคำแปลภาษา ${options.language} สำหรับอายะฮ์ ${ayah}`,
     );
-    let generated: {
-      url: string;
-      cacheStatus: GeneratedTranslationCacheStatus;
-    };
-    try {
-      generated = await dependencies.loadGeneratedTranslationAudio(
+    const request = (target: number) =>
+      dependencies.loadGeneratedTranslationAudio(
         options.surah,
-        ayah,
+        target,
         options.language,
         speed,
         signal,
       );
+    let generated: GeneratedTranslationAudio;
+    try {
+      const reused = prefetched?.ayah === ayah ? prefetched.promise : null;
+      if (reused) prefetched = null;
+      else discardPrefetched();
+      generated = await (reused ?? request(ayah));
+      if (nextAyah !== undefined && isCurrent(requestGeneration) && !signal.aborted) {
+        const promise = request(nextAyah);
+        promise.catch(() => undefined);
+        prefetched = { ayah: nextAyah, promise };
+      }
     } catch (error) {
       if (
         error instanceof PlaybackCancelled ||
@@ -372,6 +399,7 @@ export function createReaderAudioPlayback(
               ayah,
               request.signal,
               requestGeneration,
+              auto ? ayahs[index + 1] : undefined,
             );
           } else {
             dependencies.onStatus(
