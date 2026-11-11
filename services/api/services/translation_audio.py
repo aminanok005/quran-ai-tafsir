@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import logging
+import shutil
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -46,6 +47,27 @@ if count > tonumber(ARGV[2]) then
 end
 return 1
 """
+
+
+async def compress_wav_to_mp3(wav: bytes, *, bitrate: str = "48k") -> bytes:
+    """Shrink WAV speech to mono MP3; return the original if ffmpeg is unavailable or fails."""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return wav
+    try:
+        process = await asyncio.create_subprocess_exec(
+            ffmpeg, "-loglevel", "error", "-i", "pipe:0", "-ac", "1",
+            "-c:a", "libmp3lame", "-b:a", bitrate, "-f", "mp3", "pipe:1",
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        output, _ = await asyncio.wait_for(process.communicate(wav), timeout=15)
+    except (OSError, asyncio.TimeoutError):
+        return wav
+    if process.returncode != 0 or not output or len(output) >= len(wav):
+        return wav
+    return output
 
 
 @dataclass(frozen=True)
@@ -366,7 +388,7 @@ class TranslationAudioService:
             raise HTTPException(status_code=502, detail="Could not generate audio") from error
         if len(audio) > cfg.tts_max_audio_bytes or not self._is_wav_audio(audio):
             raise HTTPException(status_code=502, detail="Audio provider returned invalid audio")
-        return audio
+        return await compress_wav_to_mp3(audio)
 
     @staticmethod
     def _is_mpeg_audio(audio: bytes) -> bool:
