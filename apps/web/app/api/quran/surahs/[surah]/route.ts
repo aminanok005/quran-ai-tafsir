@@ -2,6 +2,24 @@ const supportedEditions = new Set(['th.thai', 'ar.alafasy', 'en.sahih', 'id.indo
 
 export const dynamic = 'force-dynamic';
 
+const MAX_ATTEMPTS = 3;
+
+async function fetchWithRetry(url: string): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const response = await fetch(url, { next: { revalidate: 86400 } });
+      const retryable = response.status >= 500 || response.status === 429;
+      if (!retryable || attempt === MAX_ATTEMPTS) return response;
+    } catch (error) {
+      lastError = error;
+      if (attempt === MAX_ATTEMPTS) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150 * attempt));
+  }
+  throw lastError;
+}
+
 export async function GET(
   request: Request,
   { params }: { params: { surah: string } }
@@ -18,9 +36,7 @@ export async function GET(
 
   let upstream: Response;
   try {
-    upstream = await fetch(`https://api.alquran.cloud/v1/surah/${surahNumber}/${edition}`, {
-      next: { revalidate: 86400 },
-    });
+    upstream = await fetchWithRetry(`https://api.alquran.cloud/v1/surah/${surahNumber}/${edition}`);
   } catch (error) {
     console.error(`Quran Cloud request failed for surah ${surahNumber} (${edition}):`, error);
     return Response.json({ detail: 'เชื่อมต่อแหล่งคำแปลหรือเสียงอ่านไม่สำเร็จ' }, { status: 503 });
