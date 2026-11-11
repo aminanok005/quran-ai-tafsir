@@ -45,4 +45,43 @@ describe('Quran translation edition route', () => {
     expect(response.status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('retries transient network failures and 5xx responses before succeeding', async () => {
+    const data = { ayahs: [{ number: 1, text: 'sample' }] };
+    const fetchMock = jest
+      .fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce(new Response('busy', { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ code: 200, data }));
+    globalThis.fetch = fetchMock as jest.MockedFunction<typeof fetch>;
+
+    const response = await GET(
+      new Request('http://localhost/api/quran/surahs/112/?edition=th.thai'),
+      { params: { surah: '112' } },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(data);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('gives up with 503 after repeated network failures and does not retry 4xx', async () => {
+    const failing = jest.fn().mockRejectedValue(new TypeError('fetch failed'));
+    globalThis.fetch = failing as jest.MockedFunction<typeof fetch>;
+    const down = await GET(
+      new Request('http://localhost/api/quran/surahs/112/?edition=th.thai'),
+      { params: { surah: '112' } },
+    );
+    expect(down.status).toBe(503);
+    expect(failing).toHaveBeenCalledTimes(3);
+
+    const notFound = jest.fn().mockResolvedValue(new Response('no', { status: 404 }));
+    globalThis.fetch = notFound as jest.MockedFunction<typeof fetch>;
+    const missing = await GET(
+      new Request('http://localhost/api/quran/surahs/112/?edition=th.thai'),
+      { params: { surah: '112' } },
+    );
+    expect(missing.status).toBe(502);
+    expect(notFound).toHaveBeenCalledTimes(1);
+  });
 });
