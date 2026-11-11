@@ -1,4 +1,5 @@
 import {
+  resolveTranslationVoiceEngine,
   aiUnavailableReason,
   buildTtsSettings,
   isAiAvailable,
@@ -167,5 +168,20 @@ describe('buildTtsSettings', () => {
     expect(result.aiVoiceUnavailableReason).toBe(
       'AI voice is not enabled for unknown-edition. Device voice remains available.',
     );
+  });
+});
+
+describe('resolveTranslationVoiceEngine', () => {
+  it('prefers AI voice by default when it is available', () => {
+    expect(resolveTranslationVoiceEngine(null, true)).toBe('ai');
+  });
+
+  it('keeps device voice when AI is unavailable', () => {
+    expect(resolveTranslationVoiceEngine(null, false)).toBe('device');
+  });
+
+  it('respects an explicit user choice even when AI is available', () => {
+    expect(resolveTranslationVoiceEngine('device', true)).toBe('device');
+    expect(resolveTranslationVoiceEngine('ai', false)).toBe('ai');
   });
 });

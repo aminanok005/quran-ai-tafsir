@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReaderAudioLanguage } from './reader-audio-playback';
+import type { ReaderAudioLanguage, ReaderTranslationVoiceEngine } from './reader-audio-playback';
 import type { TranslationAudioCapabilities } from '../api/client';
 
 export interface EditionConfig {
@@ -129,4 +129,15 @@ export function buildTtsSettings(
     aiVoiceAvailable: true,
     aiVoiceUnavailableReason: '',
   };
+}
+
+/**
+ * Browsers often lack a Thai device voice, so AI voice is the default whenever it is
+ * available. An explicit user choice always wins.
+ */
+export function resolveTranslationVoiceEngine(
+  userChoice: ReaderTranslationVoiceEngine | null,
+  aiVoiceAvailable: boolean,
+): ReaderTranslationVoiceEngine {
+  return userChoice ?? (aiVoiceAvailable ? 'ai' : 'device');
 }
