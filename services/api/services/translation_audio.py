@@ -4,10 +4,13 @@ import asyncio
 import base64
 import hashlib
 import json
+import io
 import logging
 import os
+import re
 import shutil
 import time
+import wave
 from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,6 +52,22 @@ if count > tonumber(ARGV[2]) then
 end
 return 1
 """
+
+
+def pcm_to_wav(pcm: bytes, sample_rate: int) -> bytes:
+    """Wrap raw 16-bit mono PCM (audio/l16) in a WAV container."""
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(sample_rate)
+        handle.writeframes(pcm)
+    return buffer.getvalue()
+
+
+def _pcm_sample_rate(mime_type: str) -> int:
+    match = re.search(r"rate=(\d{4,6})", mime_type or "")
+    return int(match.group(1)) if match else 24000
 
 
 async def compress_wav_to_mp3(wav: bytes, *, bitrate: str = "48k") -> bytes:
@@ -467,6 +486,8 @@ class TranslationAudioService:
             parts = response.json()["candidates"][0]["content"]["parts"]
             inline = next((part["inlineData"] for part in parts if "inlineData" in part), None)
             audio = base64.b64decode(inline["data"], validate=True) if inline else b""
+            if audio and not self._is_wav_audio(audio) and "l16" in str(inline.get("mimeType", "")).lower():
+                audio = pcm_to_wav(audio, _pcm_sample_rate(str(inline.get("mimeType", ""))))
         except HTTPException:
             raise
         except httpx.TimeoutException as error:
