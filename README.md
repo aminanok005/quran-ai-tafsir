@@ -23,6 +23,7 @@
 [Data Pipeline](#data-pipeline) •
 [Scholarly Methodology](#scholarly-methodology--religious-integrity) •
 [Contributing](#contributing) •
+[Next Steps & Roadmap](#next-steps--roadmap) •
 [License](#license)
 
 ---
@@ -83,6 +84,14 @@ The workspace adopts a Notion + Gemini Notebook / NotebookLM aesthetic with resi
 |-------|---------|
 | **PostgreSQL 16 + pgvector** | Canonical scripture and Tafsir embeddings; high-performance semantic & hybrid search over ~100.7 MB of classical Arabic Tafsir texts (768-dim vectors, HNSW indexing) |
 | **Strapi Headless CMS** | Dynamic Zone curriculum management — Study Tracks, Chapter Slides, Quizzes, Gamification stats |
+
+---
+
+### 3.x Translation Audio & Playback Engine
+
+**Smart Translation Audio (opt-in AI voice)** — AI-generated audio for the selected Thai, English, or Indonesian Quran translation. TTS is opt-in (`TTS_ENABLED` defaults to `false`) and rights-gated: only allowlisted editions (`th.thai`, `en.sahih`, `id.indonesian`) are synthesized, and translation text is resolved server-side from approved sources — never from the client. The backend exposes `GET /api/v1/quran/translation-audio/capabilities` (AI availability and allowlisted editions) and `GET /api/v1/quran/translation-audio/{surah}/{ayah}` (bounded cached WAV/MP3 audio with `X-Audio-Cache` header). Redis provides rate limiting.
+
+**Reader playback engine** — A Web Audio API playback coordinator (`reader-audio-playback.ts`, `web-audio-engine.ts`) with cancellation generations, object-URL lifecycle, and a single next-ayah preload (`parallel-audio-loader.ts`) that avoids duplicate requests as recitation advances. Device voice remains available whenever AI voice is unavailable, and the Reader always shows explicit status — never a silent fallback.
 
 ---
 
@@ -155,6 +164,8 @@ The workspace adopts a Notion + Gemini Notebook / NotebookLM aesthetic with resi
 | | pgvector (HNSW indexing) | Semantic & hybrid search over Tafsir embeddings |
 | | psycopg3 | PostgreSQL driver |
 | | Redis | Caching, rate limiting, sessions |
+| **Audio Services** | Go | Optional streaming audio gateway proxy (port 8090). Disabled by default; enable only after security, benchmark, license, and deployment-owner review. |
+| **Audio Services** | Rust | Optional bounded async audio worker. Disconnected from production; integration waits for codec need, licensing, benchmark, and ownership approval. |
 | **Content Management** | Strapi CMS (v4/v5) | Headless CMS for courses, chapters, quizzes (MCP server support) |
 | **DevOps & Tooling** | Docker / Docker Compose | Containerized dev environment |
 | | Pytest | Python test suite |
@@ -172,7 +183,9 @@ quran-ai-tafsir/
 ├── apps/
 │   └── web/                 # Next.js 14 3-Panel Studio Workspace
 ├── services/
-│   └── api/                 # FastAPI RAG Backend & Multi-Agent Orchestrator
+│   ├── api/                 # FastAPI RAG Backend & Multi-Agent Orchestrator
+│   ├── audio-gateway-go/    # Optional streaming audio gateway spike (Go, port 8090, disabled)
+│   └── audio-worker-rs/     # Optional bounded async audio worker spike (Rust, disconnected)
 ├── packages/
 │   └── database/            # PostgreSQL Migrations & pgvector schemas
 ├── cms/
@@ -400,7 +413,37 @@ We welcome contributions that advance source-grounded Quran study. Because this 
 
 ---
 
-## 12. License
+## 12. Next Steps & Roadmap
+
+### Completed (committed on `agents/update-readme-next-steps`)
+
+- **Smart Translation Audio (TTS)** — opt-in AI-generated translation audio for Thai (`th.thai`), English (`en.sahih`), and Indonesian (`id.indonesian`), with server-side text resolution, bounded caching, Redis rate limiting, and explicit availability status in the Reader.
+- **Reader parallel translation preload** — at most one next-ayah generated translation audio preloaded per sequence, consumed on matching playback to avoid duplicate requests.
+- **Web Audio Engine** — cancellation generations, object-URL lifecycle, and shared playback coordination for the Reader.
+- **Go audio gateway spike** — bounded streaming proxy (`services/audio-gateway-go`, port 8090) restricted to the approved CDN upstream; disabled by default.
+- **Rust audio worker spike** — bounded async worker (`services/audio-worker-rs`) with deterministic error codes; disconnected from production.
+
+### Next / Planned
+
+The following implementation plans are tracked under `docs/superpowers/plans/`:
+
+- **Grounded Suggested Follow-Ups** (`2026-11-08-grounded-suggested-follow-ups.md`) — per-answer, source-verified follow-up suggestions for Grounded dialogue; migration `0004` authored but not applied to production.
+- **Gemini Translation Route** (`2026-11-10-gemini-translation-route.md`) — `POST /api/v1/tafsir/gemini-translation` for grounded Arabic-to-Thai translation.
+- **Reader Audio Autoplay** (`2026-11-08-reader-audio-autoplay.md`) — single `Listen Audio` action, spoken translation, and cancellable Auto playback.
+- **Reader Demo UX** (`2026-11-08-reader-demo-ux.md`) — Reader demo experience.
+- **Vibe Coding Control Modes** (`2026-11-08-vibe-coding-control-modes.md`) — agent control modes for AI-assisted development.
+- **Workspace Studio Router** (`2026-11-07-workspace-studio-9router.md`) — studio workspace routing.
+
+### Principles for next work
+
+- **Source grounding first:** no AI-generated Tafsir or audio text that cannot be traced to a permission-approved classical source.
+- **Opt-in by default:** AI voice, translation, and suggestion features default to off or require explicit enablement.
+- **No silent fallbacks:** unavailable AI features report explicit status; device voice remains available.
+- **Review before enabling:** Go/Rust audio spikes remain disabled until security, benchmark, license, and deployment-owner review.
+
+---
+
+## 13. License
 
 This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
 

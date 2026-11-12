@@ -31,6 +31,10 @@ import type {
   ReaderSpeechUtterance,
 } from '../src/lib/quran/reader-audio-playback';
 import { buildTtsSettings, mapLanguageToEdition, resolveTranslationVoiceEngine } from '../src/lib/quran/reader-audio-settings';
+import { buildAudioCacheKey, formatFromUrl } from '../src/lib/quran/audio-cache-key';
+import { createAudioIdbCache } from '../src/lib/quran/audio-idb-cache';
+import { createParallelAudioLoader, fetchUrlAudioBlob } from '../src/lib/quran/parallel-audio-loader';
+import { createWebAudioEngine } from '../src/lib/quran/web-audio-engine';
 import {
   getWorkspaceShortcutAction,
   readWorkspaceLayout,
@@ -453,6 +457,7 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
   const [translationAudioCapabilityError, setTranslationAudioCapabilityError] = useState('');
   const [playbackState, setPlaybackState] = useState<ReaderAudioPlaybackState>('idle');
   const [playbackStatus, setPlaybackStatus] = useState('พร้อมเล่นเสียง');
+  const [isOffline, setIsOffline] = useState(false);
   const [translationError, setTranslationError] = useState('');
   const [search, setSearch] = useState('');
   const [arabicFontSize, setArabicFontSize] = useState(36);
@@ -498,6 +503,17 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
     retry: false,
     staleTime: 60_000,
   });
+
+  useEffect(() => {
+    const updateNetworkStatus = () => setIsOffline(!window.navigator.onLine);
+    updateNetworkStatus();
+    window.addEventListener('online', updateNetworkStatus);
+    window.addEventListener('offline', updateNetworkStatus);
+    return () => {
+      window.removeEventListener('online', updateNetworkStatus);
+      window.removeEventListener('offline', updateNetworkStatus);
+    };
+  }, []);
 
   useEffect(() => {
     const request = new AbortController();
@@ -676,6 +692,11 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
           },
         }
       : null;
+    const supportsWebAudio = typeof window.AudioContext === 'function'
+      || typeof (window as Window & { webkitAudioContext?: unknown }).webkitAudioContext === 'function';
+    const audioCache = supportsWebAudio ? createAudioIdbCache({ indexedDB: window.indexedDB }) : null;
+    const audioLoader = audioCache ? createParallelAudioLoader({ cache: audioCache }) : null;
+    const webAudioEngine = supportsWebAudio ? createWebAudioEngine() : null;
     const controller = createReaderAudioPlayback({
       audio,
       speech,
@@ -715,6 +736,20 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
           cacheStatus: generatedAudio.cacheStatus,
         };
       },
+      loadRecitationAudio: async (targetSurah, targetAyah, url, signal) => {
+        const key = buildAudioCacheKey({
+          source: 'recitation',
+          reciterOrVoice: 'ar.alafasy',
+          language: 'ar',
+          surah: targetSurah,
+          ayah: targetAyah,
+          format: formatFromUrl(url),
+        });
+        if (!audioLoader) throw new Error('Web Audio is unavailable');
+        const clip = await audioLoader.load(key, (requestSignal) => fetchUrlAudioBlob(url, requestSignal), signal);
+        return clip.blob;
+      },
+      webAudioEngine: webAudioEngine ?? undefined,
       revokeGeneratedAudioUrl: (url) => URL.revokeObjectURL(url),
       onAyahChange: (nextAyah) => playbackAyahChangeRef.current(nextAyah),
       onStatus: setPlaybackStatus,
@@ -722,6 +757,7 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
     });
     playbackControllerRef.current = controller;
     return () => {
+      audioLoader?.abort();
       controller.dispose();
       playbackControllerRef.current = null;
     };
@@ -933,7 +969,7 @@ function Reader({ initialSurah, initialAyah }: { initialSurah: number; initialAy
         ? aiVoiceUnavailableReason
         : playbackStatus === 'พร้อมเล่นเสียง' && audioError
           ? `ยังโหลดเสียงอ่านไม่ได้: ${audioError}`
-          : playbackStatus}
+          : `${isOffline ? 'ออฟไลน์: ' : ''}${playbackStatus}`}
       listenDisabled={translationVoiceUnavailable || (playbackMode !== 'translation' && !audioUrl)}
       autoDisabled={translationVoiceUnavailable || ((playbackMode !== 'translation' && !audioUrl) || ayahs.length === 0)}
       onModeChange={changePlaybackMode}

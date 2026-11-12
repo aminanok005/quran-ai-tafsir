@@ -1113,7 +1113,8 @@ async def test_quota_error_falls_back_to_next_model_and_returns_audio():
     service = fallback_service(provider)
     result = await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
     assert result.audio == WAV_BYTES
-    assert [u.split("/models/")[1].split(":")[0] for u in seen] == ["primary-tts", "backup-tts"]
+    models = [u.split("/models/")[1].split(":")[0] for u in seen]
+    assert "primary-tts" in models and "backup-tts" in models
     await service.aclose()
 
 
@@ -1131,10 +1132,11 @@ async def test_rate_limited_model_is_skipped_during_cooldown_then_retried():
     service = fallback_service(provider, clock=lambda: now[0])
     await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
     await service.synthesize(1, 1, "th.thai", 1.1, "192.0.2.3")
-    assert seen == ["primary-tts", "backup-tts", "backup-tts"]
+    assert seen[:3] == ["primary-tts", "backup-tts", "last-tts"]
+    assert seen[3:5] == ["backup-tts", "last-tts"]
     now[0] = 1401.0
     await service.synthesize(1, 1, "th.thai", 1.2, "192.0.2.3")
-    assert seen[-1] == "primary-tts"
+    assert "primary-tts" in seen[-3:]
     await service.aclose()
 
 
@@ -1252,3 +1254,80 @@ def test_pcm_wrapper_builds_valid_wav_header():
     with wave.open(io.BytesIO(wav)) as handle:
         assert (handle.getnchannels(), handle.getsampwidth(), handle.getframerate()) == (1, 2, 24000)
         assert handle.getnframes() == 240
+
+
+@pytest.mark.anyio
+async def test_parallel_race_primary_quota_exhausted_fallback_succeeds():
+    seen = []
+
+    async def provider(request):
+        seen.append(str(request.url))
+        if "primary-tts" in str(request.url):
+            return httpx.Response(429, json={})
+        return gemini_audio_reply()
+
+    async def source(request):
+        return httpx.Response(200, json=valid_source_response())
+
+    service = fallback_service(provider)
+    result = await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
+    assert result.audio == WAV_BYTES
+    models = [u.split("/models/")[1].split(":")[0] for u in seen]
+    assert "primary-tts" in models and "backup-tts" in models
+    await service.aclose()
+
+
+@pytest.mark.anyio
+async def test_parallel_race_all_exhausted_returns_429():
+    async def provider(request):
+        return httpx.Response(429, json={})
+
+    async def source(request):
+        return httpx.Response(200, json=valid_source_response())
+
+    service = fallback_service(provider)
+    with pytest.raises(HTTPException) as error:
+        await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
+    assert error.value.status_code == 429
+    assert "quota" in error.value.detail.lower()
+    await service.aclose()
+
+
+@pytest.mark.anyio
+async def test_parallel_race_all_models_fired_once():
+    calls = {"n": 0}
+
+    async def provider(request):
+        calls["n"] += 1
+        return gemini_audio_reply()
+
+    async def source(request):
+        return httpx.Response(200, json=valid_source_response())
+
+    service = fallback_service(provider)
+    result = await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
+    assert result.audio == WAV_BYTES
+    assert calls["n"] == 3
+    await service.aclose()
+
+
+@pytest.mark.anyio
+async def test_parallel_race_cooldown_skips_failed_model_but_tries_others():
+    seen = []
+    now = [1000.0]
+
+    async def provider(request):
+        seen.append(str(request.url).split("/models/")[1].split(":")[0])
+        if "primary-tts" in str(request.url):
+            return httpx.Response(429, json={})
+        return gemini_audio_reply()
+
+    service = fallback_service(provider, clock=lambda: now[0])
+    await service.synthesize(1, 1, "th.thai", 1.0, "192.0.2.3")
+    assert seen == ["primary-tts", "backup-tts", "last-tts"]
+    await service.synthesize(1, 1, "th.thai", 1.1, "192.0.2.3")
+    assert seen[-2:] == ["backup-tts", "last-tts"]
+    now[0] = 1401.0
+    await service.synthesize(1, 1, "th.thai", 1.2, "192.0.2.3")
+    assert seen[-3:] == ["primary-tts", "backup-tts", "last-tts"]
+    await service.aclose()

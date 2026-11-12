@@ -507,16 +507,41 @@ class TranslationAudioService:
         )
 
     async def _request_gemini_with_fallback(self, text: str, voice: str) -> bytes:
-        last: HTTPException | None = None
-        for model in self._model_chain():
+        models = self._model_chain()
+        if not models:
+            raise HTTPException(status_code=503, detail="Translation audio is unavailable")
+        now = self._clock()
+        ready = [m for m in models if self._model_cooldowns.get(m, 0.0) <= now]
+        if not ready:
+            ready = models
+
+        async def attempt(model: str) -> tuple[bytes | None, HTTPException | None]:
             try:
-                return await self._request_gemini_audio(text, voice, model)
+                audio = await self._request_gemini_audio(text, voice, model)
+                return audio, None
             except HTTPException as error:
-                if error.status_code not in {429, 502, 503, 504}:
-                    raise
-                self._model_cooldowns[model] = self._clock() + self.settings.tts_model_cooldown_seconds
-                logger.warning("TTS model %s unavailable (HTTP %s); trying next", model, error.status_code)
-                last = error
+                if error.status_code in {429, 502, 503, 504}:
+                    self._model_cooldowns[model] = self._clock() + self.settings.tts_model_cooldown_seconds
+                    logger.warning("TTS model %s unavailable (HTTP %s); cooling down", model, error.status_code)
+                return None, error
+
+        last: HTTPException | None = None
+        pending = {asyncio.create_task(attempt(m)) for m in ready}
+        try:
+            while pending:
+                done, _ = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+                for task in done:
+                    audio, error = task.result()
+                    if audio is not None:
+                        for t in pending:
+                            t.cancel()
+                        return audio
+                    if error is not None:
+                        last = error
+                pending -= done
+        finally:
+            for t in pending:
+                t.cancel()
         assert last is not None
         raise last
 

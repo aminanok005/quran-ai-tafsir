@@ -1,0 +1,8 @@
+goos: linux
+goarch: amd64
+pkg: quran-intelligent-tafsir/audio-gateway/internal/httpaudio
+cpu: Intel(R) Core(TM) i3-10100 CPU @ 3.60GHz
+BenchmarkNativeAudio-8    	   25987	     95459 ns/op	 686.54 MB/s	    5799 B/op	      69 allocs/op
+BenchmarkGatewayAudio-8   	   16509	    151820 ns/op	 431.67 MB/s	  145736 B/op	     116 allocs/op
+PASS
+ok  	quran-intelligent-tafsir/audio-gateway/internal/httpaudio	9.699s

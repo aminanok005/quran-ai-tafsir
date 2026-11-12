@@ -1,3 +1,5 @@
+import type { WebAudioEngine } from "./web-audio-engine";
+
 export type ReaderAudioMode =
   "recitation" | "translation" | "recitation-then-translation";
 export type ReaderAudioLanguage = "th" | "en" | "id";
@@ -68,6 +70,13 @@ interface ReaderAudioPlaybackDependencies {
     speed: ReaderAudioSpeed,
     signal: AbortSignal,
   ): Promise<{ url: string; cacheStatus: GeneratedTranslationCacheStatus }>;
+  loadRecitationAudio?: (
+    surah: number,
+    ayah: number,
+    url: string,
+    signal: AbortSignal,
+  ) => Promise<Blob>;
+  webAudioEngine?: WebAudioEngine;
   revokeGeneratedAudioUrl(url: string): void;
   onAyahChange(ayah: number): void;
   onStatus(status: string): void;
@@ -75,6 +84,15 @@ interface ReaderAudioPlaybackDependencies {
 }
 
 class PlaybackCancelled extends Error {}
+
+function supportsBlobAudio(url: string): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return new URL(url, window.location.href).origin === window.location.origin;
+  } catch {
+    return false;
+  }
+}
 
 function languageVoice(
   voices: ReaderAudioVoice[],
@@ -132,6 +150,7 @@ export function createReaderAudioPlayback(
     audio.onerror = null;
     audio.pause();
     audio.currentTime = 0;
+    dependencies.webAudioEngine?.stop();
     speech?.cancel();
     if (updateState) dependencies.onStateChange("idle");
     return generation;
@@ -181,8 +200,45 @@ export function createReaderAudioPlayback(
     url: string,
     signal: AbortSignal,
     requestGeneration: number,
+    surah?: number,
+    ayah?: number,
+    nextUrl?: string,
+    nextAyah?: number,
   ): Promise<void> {
     if (!url) return Promise.reject(new Error("ไม่มีเสียงอ่านสำหรับอายะฮ์นี้"));
+    if (
+      dependencies.webAudioEngine
+      && dependencies.loadRecitationAudio
+      && surah
+      && ayah
+      && supportsBlobAudio(url)
+    ) {
+      if (nextUrl && nextAyah !== undefined) {
+        void dependencies.loadRecitationAudio(surah, nextAyah, nextUrl, signal)
+          .then((blob) => dependencies.webAudioEngine!.decode(blob))
+          .then((buffer) => {
+            if (isCurrent(requestGeneration) && !signal.aborted) {
+              dependencies.webAudioEngine!.armNext(buffer, audio.playbackRate);
+            }
+          })
+          .catch(() => undefined);
+      }
+      return dependencies.loadRecitationAudio(surah, ayah, url, signal)
+        .then((blob) => dependencies.webAudioEngine!.decode(blob))
+        .then((buffer) => dependencies.webAudioEngine!.playBuffer(buffer, audio.playbackRate, signal))
+        .catch((error) => {
+          if (signal.aborted || !isCurrent(requestGeneration)) throw error;
+          return playRecitationFallback(url, signal, requestGeneration);
+        });
+    }
+    return playRecitationFallback(url, signal, requestGeneration);
+  }
+
+  function playRecitationFallback(
+    url: string,
+    signal: AbortSignal,
+    requestGeneration: number,
+  ): Promise<void> {
     audio.src = url;
     audio.currentTime = 0;
 
@@ -390,6 +446,10 @@ export function createReaderAudioPlayback(
             options.audioByAyah[ayah] ?? "",
             request.signal,
             requestGeneration,
+            options.surah,
+            ayah,
+            auto ? options.audioByAyah[ayahs[index + 1]] : undefined,
+            auto ? ayahs[index + 1] : undefined,
           );
         }
         if (options.mode !== "recitation") {
@@ -480,6 +540,7 @@ export function createReaderAudioPlayback(
     },
     dispose: () => {
       stopCurrent(false);
+      dependencies.webAudioEngine?.dispose();
     },
   };
 }
