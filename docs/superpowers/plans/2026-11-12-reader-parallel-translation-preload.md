@@ -39,10 +39,10 @@
 - Reuse existing `loadGeneratedTranslationAudio(surah, ayah, language, speed, signal)` dependency.
 - Add controller-local single-item preload state; keep API contract unchanged.
 
-- [ ] Write failing tests for one-next-only cap, failure isolation, abort on stop/navigation, final-ayah guard, and reuse without duplicate request.
-- [ ] Run `cd apps/web && npm test -- --runInBand src/lib/quran/reader-audio-playback.test.ts` and confirm new assertions fail.
-- [ ] Implement smallest controller change: derive only immediate next ayah, key by coordinates/language/speed, await/consume matching preload before on-demand generation, abort and dispose stale results.
-- [ ] Run the focused test file and confirm pass.
+- [x] Write failing tests for one-next-only cap, failure isolation, abort on stop/navigation, final-ayah guard, and reuse without duplicate request.
+- [x] Run `cd apps/web && npm test -- --runInBand src/lib/quran/reader-audio-playback.test.ts` and confirm new assertions fail.
+- [x] Implement smallest controller change: derive only immediate next ayah, key by coordinates/language/speed, await/consume matching preload before on-demand generation, abort and dispose stale results.
+- [x] Run the focused test file and confirm pass.
 
 ### Task 2: Reader Integration and Regression
 
@@ -54,10 +54,10 @@
 **Interfaces:**
 - Consume Task 1 controller lifecycle; preserve existing API call and cache key semantics.
 
-- [ ] Add integration test proving one next translation request is reused during combined playback; cover cache hit and settings change key mismatch.
-- [ ] Implement only required Reader wiring; do not add duplicate fetch/cache layers.
-- [ ] Run `cd apps/web && npm test -- --runInBand app/page.test.tsx src/lib/quran/reader-audio-playback.test.ts src/lib/api/client.test.ts`.
-- [ ] Run `cd apps/web && npm run typecheck` and `git diff --check`.
+- [x] Add integration test proving one next translation request is reused during combined playback; cover cache hit and settings change key mismatch.
+- [x] Implement only required Reader wiring; do not add duplicate fetch/cache layers.
+- [x] Run `cd apps/web && npm test -- --runInBand app/page.test.tsx src/lib/quran/reader-audio-playback.test.ts src/lib/api/client.test.ts`.
+- [x] Run `cd apps/web && npm run typecheck` and `git diff --check`.
 
 ## Completion Criteria
 
