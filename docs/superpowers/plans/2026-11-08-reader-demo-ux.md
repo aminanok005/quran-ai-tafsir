@@ -25,17 +25,17 @@
 - Reference: `apps/web/app/page.tsx`
 - Reference: `apps/web/app/api/quran/surahs/[surah]/ayahs/route.ts`
 
-- [ ] **Step 1: Add a deferred-response test for initial loading**
+- [x] **Step 1: Add a deferred-response test for initial loading**
 
 Add a test that holds the `/api/quran/surahs/1/ayahs/` request pending while the page renders. Assert the Reader exposes an accessible busy/loading state and does not render an empty-result message before the request resolves.
 
-- [ ] **Step 2: Run the focused test and verify the expected failure**
+- [x] **Step 2: Run the focused test and verify the expected failure**
 
 Run: `cd apps/web && bun run test -- --runInBand app/page.test.tsx -t "shows loading"`
 
 Expected: FAIL because the current loading skeleton does not expose the specified accessible status contract.
 
-- [ ] **Step 3: Add tests for empty, malformed, missing, and unavailable Quran data**
+- [x] **Step 3: Add tests for empty, malformed, missing, and unavailable Quran data**
 
 Cover these independent outcomes:
 
@@ -46,7 +46,7 @@ Cover these independent outcomes:
 
 Keep the existing successful QPC response fixture and assertions as the loaded-state regression, including its selected ayah.
 
-- [ ] **Step 4: Run the focused tests and verify failures are behavioral**
+- [x] **Step 4: Run the focused tests and verify failures are behavioral**
 
 Run: `cd apps/web && bun run test -- --runInBand app/page.test.tsx`
 
@@ -58,19 +58,19 @@ Expected: the newly added state-contract tests fail on the current implementatio
 - Modify: `apps/web/app/page.tsx`
 - Test: `apps/web/app/page.test.tsx`
 
-- [ ] **Step 1: Add a strict Quran verse-list parser**
+- [x] **Step 1: Add a strict Quran verse-list parser**
 
 Keep the existing permissive `listOf` helper for unrelated translation/audio metadata. Add a Reader-specific parser accepting a top-level array or one of the existing supported envelope keys (`data`, `surahs`, `ayahs`, `translations`) only when its value is an array containing records. Throw a descriptive error for missing/null collections, malformed envelopes, or non-record array entries; do not convert these cases to `[]`.
 
-- [ ] **Step 2: Use strict parsing at the Quran-data boundary**
+- [x] **Step 2: Use strict parsing at the Quran-data boundary**
 
 Use the strict parser for the local surah list and selected-surah ayah response before setting success/empty state. A valid array with zero records is the only empty result. Preserve the existing route error detail behavior. Add an explicit request-version trigger for retries so clicking retry re-fetches the same selected surah instead of relying on setting the ayah state to its existing value.
 
-- [ ] **Step 3: Make loading and error feedback accessible and visually clear**
+- [x] **Step 3: Make loading and error feedback accessible and visually clear**
 
 Expose loading with a live status and `aria-busy` on the Reader result region. Keep skeletons while pending. Mark fetch failures as alerts, keep the actionable retry button, and style the successful empty state as a distinct quiet card. Tighten selected-ayah hierarchy with a calm but clear selected-card treatment and intentional spacing, retaining `aria-current` semantics. Preserve the current green palette, responsive panels, Arabic size control, navigation, translation/audio, and all citation/source behavior.
 
-- [ ] **Step 4: Run the focused page integration tests**
+- [x] **Step 4: Run the focused page integration tests**
 
 Run: `cd apps/web && bun run test -- --runInBand app/page.test.tsx`
 
@@ -81,7 +81,7 @@ Expected: all page tests pass, including loading, strict error/empty distinction
 **Files:**
 - No code changes expected unless verification identifies a defect covered by Tasks 1–2.
 
-- [ ] **Step 1: Run the full web test suite and typecheck**
+- [x] **Step 1: Run the full web test suite and typecheck**
 
 Run: `cd apps/web && bun run test -- --runInBand`
 
@@ -91,14 +91,14 @@ Run: `cd apps/web && bun run typecheck`
 
 Expected: TypeScript exits with code 0.
 
-- [ ] **Step 2: Verify the live Reader API routes**
+- [x] **Step 2: Verify the live Reader API routes**
 
 Check `http://localhost:<demo-port>/api/quran/surahs/` and
 `http://localhost:<demo-port>/api/quran/surahs/1/ayahs/` return successful
 responses, where `<demo-port>` is 3000 unless the fallback below is needed. Do
 not print or inspect environment secrets.
 
-- [ ] **Step 3: Inspect both demo entry points in the browser**
+- [x] **Step 3: Inspect both demo entry points in the browser**
 
 Open `http://localhost:<demo-port>` and
 `http://localhost:<demo-port>/?view=reader`. Verify the landing page remains
@@ -114,7 +114,7 @@ If Next reports that port 3001 is busy, use the actual alternate port reported
 by Next. Set `<demo-port>` to the port printed in the successful server-ready
 message for all API-route and browser checks.
 
-- [ ] **Step 4: Check the final worktree and patch**
+- [x] **Step 4: Check the final worktree and patch**
 
 Run: `git diff --check && git status --short`
 
