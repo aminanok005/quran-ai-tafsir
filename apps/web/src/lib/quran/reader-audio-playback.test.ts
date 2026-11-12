@@ -948,6 +948,8 @@ describe("Reader audio playback coordinator", () => {
     // Verify ayah 2 is now playing
     expect(audio.src).toBe("blob:t-2");
 
+    // Stop auto playback so the task resolves without playing through all 5 ayahs
+    controller.stop();
     await task;
   });
 
@@ -980,6 +982,10 @@ describe("Reader audio playback coordinator", () => {
 
   it("final ayah does not attempt to preload next ayah", async () => {
     const { audio, controller, loadGeneratedTranslationAudio } = setup();
+    loadGeneratedTranslationAudio.mockImplementation(async (_s, ayah) => ({
+      url: `blob:t-${ayah}`,
+      cacheStatus: "unknown",
+    }));
     // ayahNumbers ends at 3, so ayah 3 is the final ayah with no next
     const task = controller.startAuto({
       ...options("translation"),
@@ -994,12 +1000,18 @@ describe("Reader audio playback coordinator", () => {
     audio.finish();
     // Wait for ayah 2 to start
     for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    expect(audio.src).toBe("blob:t-2");
 
     // Finish ayah 2 - should advance to ayah 3 (final)
     audio.finish();
+    // Wait for ayah 3 to start
+    for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    expect(audio.src).toBe("blob:t-3");
+
+    // Finish ayah 3 - task should complete without trying to preload ayah 4
+    audio.finish();
     for (let i = 0; i < 8; i += 1) await Promise.resolve();
 
-    // Ayah 3 is final, task should complete without trying to preload ayah 4
     await task;
     // The task completes successfully - no ayah 4 preload attempted
   });
@@ -1036,6 +1048,11 @@ describe("Reader audio playback coordinator", () => {
 
     // Ayah 1 should play again
     expect(audio.src).toBe("blob:t-1");
+    audio.finish();
+    for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    expect(audio.src).toBe("blob:t-2");
+
+    // Finish ayah 2 so task2 can complete
     audio.finish();
     for (let i = 0; i < 8; i += 1) await Promise.resolve();
 
