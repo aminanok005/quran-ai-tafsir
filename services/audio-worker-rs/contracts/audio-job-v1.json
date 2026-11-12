@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "job": {
+    "job_id": "opaque-id",
+    "source_format": "mp3",
+    "target_format": "mp3",
+    "bytes_limit": 1048576
+  },
+  "result": {
+    "version": 1,
+    "status": "ok",
+    "output_format": "mp3",
+    "byte_length": 0,
+    "error_code": null
+  }
+}

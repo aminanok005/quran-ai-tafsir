@@ -6,6 +6,7 @@ Implements hybrid RAG pipeline and evidence validation.
 """
 
 import asyncio
+import json
 import logging
 import time
 from datetime import datetime
@@ -20,6 +21,7 @@ from ..agents.ibn_ashur_agent import IbnAshurAgent
 from ..agents.ibn_kathir_agent import IbnKathirAgent
 
 logger = logging.getLogger(__name__)
+MAX_AGENT_CONTEXT_CHARS = 120_000
 
 class AgentOrchestratorService:
     """Orchestrates 6 specialized Tafsir agents with evidence validation."""
@@ -74,6 +76,7 @@ class AgentOrchestratorService:
         trusted_passages = self._trusted_passages(source_passages or [])
         if not trusted_passages:
             raise ValueError("No approved, verified source passages are available")
+        trusted_passages = self._deduplicate_passages(trusted_passages)
 
         agent_context = dict(context or {})
         agent_context.update({
@@ -82,6 +85,8 @@ class AgentOrchestratorService:
             "source_passages": trusted_passages,
             "timestamp": datetime.now().isoformat()
         })
+        if len(json.dumps(agent_context, ensure_ascii=False, separators=(",", ":"))) > MAX_AGENT_CONTEXT_CHARS:
+            raise ValueError("Approved agent context exceeds configured size limit")
 
         started = time.perf_counter()
         semaphore = asyncio.Semaphore(self.max_concurrency)
@@ -203,6 +208,13 @@ class AgentOrchestratorService:
             and passage.get("verification_evidence")
             and passage.get("source_reference")
         ]
+
+    @staticmethod
+    def _deduplicate_passages(passages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        unique = {}
+        for passage in passages:
+            unique.setdefault(passage["passage_id"], passage)
+        return list(unique.values())
 
     @staticmethod
     def _canonical_citations(

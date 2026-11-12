@@ -683,14 +683,14 @@ describe('workspace page integration', () => {
     installLocalQuranFetch((path) => {
       if (path.includes('/ayahs/')) {
         return localQuranResponse([
-          { number: 1, numberInSurah: 1, text_uthmani: 'Arabic one', page_number: 1 },
-          { number: 2, numberInSurah: 2, text_uthmani: 'Arabic two', page_number: 1 },
+          { number: 8, numberInSurah: 1, text_uthmani: 'Arabic one', page_number: 1 },
+          { number: 9, numberInSurah: 2, text_uthmani: 'Arabic two', page_number: 1 },
         ]);
       }
       if (path.includes('edition=ar.alafasy')) {
         return localQuranResponse([
-          { number: 1, numberInSurah: 1, audio: 'https://audio.example/1.mp3' },
-          { number: 2, numberInSurah: 2, audio: 'https://audio.example/2.mp3' },
+          { number: 8, numberInSurah: 1, audio: 'https://audio.example/8.mp3' },
+          { number: 9, numberInSurah: 2, audio: 'https://audio.example/9.mp3' },
         ]);
       }
       return localQuranResponse(defaultLocalQuranBody(path));
@@ -709,13 +709,13 @@ describe('workspace page integration', () => {
 
     fireEvent.click(screen.getAllByRole('switch', { name: 'เล่นต่อเนื่อง' })[0]);
     await waitFor(() => expect(play).toHaveBeenCalledTimes(1));
-    expect(audio.src).toBe('https://audio.example/1.mp3');
+    expect(audio.src).toBe('https://audio.example/8.mp3');
 
     await act(async () => {
       audio.dispatchEvent(new Event('ended'));
     });
     await waitFor(() => expect(play).toHaveBeenCalledTimes(2));
-    expect(audio.src).toBe('https://audio.example/2.mp3');
+    expect(audio.src).toBe('https://audio.example/9.mp3');
     expect(scroll).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
     expect(new URLSearchParams(window.location.search).get('ayah')).toBe('2');
 

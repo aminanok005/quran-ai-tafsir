@@ -135,6 +135,16 @@ class AgentOrchestratorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(agent.contexts[0]["source_passages"], [TRUSTED_PASSAGE])
         self.assertEqual(context, {"question": "study"})
 
+    async def test_context_budget_fails_closed_without_truncating_source(self):
+        agent = AgentStub()
+        orchestrator = AgentOrchestratorService({"scholar": agent})
+        oversized = {**TRUSTED_PASSAGE, "text": "x" * 120_000}
+
+        with self.assertRaisesRegex(ValueError, "exceeds configured size limit"):
+            await orchestrator.execute_agent_analysis(
+                1, 1, ["scholar"], source_passages=[oversized]
+            )
+
     async def test_batch_questions_keep_each_answer_and_citation_in_its_section(self):
         agent = AgentStub()
         orchestrator = AgentOrchestratorService({"scholar": agent})
